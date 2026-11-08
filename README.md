@@ -7,7 +7,7 @@ git clone https://github.com/Kuner-mw/dlssnr-suite
 cd dlssnr-suite && ./install.sh
 ```
 
-主要安装有：**DLSS5VKLayer 截取管线**（开源，自动装）+ **NVIDIA NGX 神经渲染库**（自动下载并校验）+ **本项目的 Web 控制面板**（自动编译/下载并注册 systemd 服务）。
+主要安装有：**DLSS5VKLayer 截取管线**（开源，自动装）+ **本项目的 Web 控制面板**（自动编译/下载并注册 systemd 服务）。NR 模型不入库、不自动下载，由使用者按下方来源索引自行获取。
 
 ## 这是什么
 
@@ -107,7 +107,7 @@ tail -f ~/.local/state/dlssnr/helper.log                     # 逐帧日志
 
 ## 版本 pin 与升级
 
-`install.sh` 顶部集中管理三个 pin，升级时改这里即可：
+`install.sh` 顶部集中管理组件 pin，升级时改这里即可：
 
 | 组件 | 来源 | 当前 pin |
 |---|---|---|

@@ -423,7 +423,7 @@ function showFatal(msg){
 }
 
 // ── token ──────────────────────────────────────────────────────────────────
-const BUILD_TAG = "2026-11-08 12:28 universal-panel";
+const BUILD_TAG = "2026-11-08 15:52 universal-panel";
 const qs = new URLSearchParams(location.search);
 const qsTok = qs.get("token");
 if (qsTok) { localStorage.setItem("dlssnr_token", qsTok); history.replaceState(null,"",location.pathname); }
@@ -925,14 +925,19 @@ async function loadModels(){
     lib.appendChild(d);
   });
 }
-document.getElementById("mRefresh").onclick=async ()=>{ const j=await api("/api/models",{action:"refresh"}); toast("已刷新"); loadModels(); };
+document.getElementById("mRefresh").onclick=async ()=>{ try{ const j=await api("/api/models",{action:"refresh"}); toast("已刷新"); loadModels(); }catch(e){} };
 document.getElementById("mImport").onclick=async ()=>{
+  const btn=document.getElementById("mImport");
   const path=(document.getElementById("mImportPath").value||"").trim();
   if(!path) return toast("先粘贴模型 dll 的完整路径", true);
-  const r=await api("/api/models",{action:"import", path});
-  toast(r.msg||"已导入");
-  document.getElementById("mImportPath").value="";
-  loadModels();
+  btn.disabled=true;
+  try{
+    const r=await api("/api/models",{action:"import", path});
+    toast(r.msg||"已导入");
+    document.getElementById("mImportPath").value="";
+    await loadModels();
+  }catch(e){ /* api 已 toast 错误 */ }
+  btn.disabled=false;
 };
 
 // helper

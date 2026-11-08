@@ -4,6 +4,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// 模型库文件操作锁：导入与切换共用，防并发写坏 dll
+static MODEL_IO_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn models_dir() -> PathBuf {
     crate::sysapi::home().join(".local/share/dlssnr/models")
@@ -31,19 +35,25 @@ pub struct ModelItem {
     pub sha256: String,
 }
 
-fn sha256_short(path: &Path) -> String {
+fn sha256_file(path: &Path) -> std::io::Result<String> {
     use std::io::Read;
     let mut h = Sha256::new();
-    if let Ok(mut f) = std::fs::File::open(path) {
-        let mut buf = [0u8; 1 << 20];
-        while let Ok(n) = f.read(&mut buf) {
-            if n == 0 {
-                break;
-            }
-            h.update(&buf[..n]);
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = vec![0u8; 1 << 20]; // 堆分配：HTTP worker 线程栈小，栈上 1MB 会爆
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
         }
+        h.update(&buf[..n]);
     }
-    format!("{:x}…", h.finalize())[..16].to_string() + "…"
+    Ok(format!("{:x}", h.finalize()))
+}
+
+fn sha256_short(path: &Path) -> String {
+    sha256_file(path)
+        .map(|s| format!("{}…", &s[..16]))
+        .unwrap_or_else(|_| "…".into())
 }
 
 fn read_lib() -> HashMap<String, serde_json::Value> {
@@ -69,7 +79,7 @@ pub fn scan() -> serde_json::Value {
         .filter_map(|e| {
             let p = e.path();
             let name = p.file_name()?.to_string_lossy().into_owned();
-            if !name.ends_with(".dll") {
+            if !name.to_lowercase().ends_with(".dll") {
                 return None;
             }
             let meta = lib.get(&name).cloned().unwrap_or_default();
@@ -123,6 +133,7 @@ pub fn scan() -> serde_json::Value {
 }
 
 pub fn activate(file_name: &str) -> Result<String, String> {
+    let _guard = MODEL_IO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let file_name = Path::new(file_name)
         .file_name()
         .ok_or("文件名不合法")?
@@ -138,7 +149,11 @@ pub fn activate(file_name: &str) -> Result<String, String> {
         let cur_sha = sha256_short(&active_dll());
         let known: Vec<String> = crate::sysapi::entries(&models_dir())
             .iter()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "dll"))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .is_some_and(|x| x.to_string_lossy().eq_ignore_ascii_case("dll"))
+            })
             .map(|e| sha256_short(&e.path()))
             .collect();
         if !known.contains(&cur_sha) {
@@ -176,13 +191,21 @@ fn chrono_stamp() -> String {
 }
 
 /// 从本机路径导入模型 dll 到模型库（使用者自行下载后粘贴路径导入）。
-/// 校验：存在、.dll 后缀、PE 头；同内容幂等。
+/// 校验：存在、~ 展开、.dll 后缀、PE 头、≤2GB；临时文件写入并复核哈希后原子落位
+/// （防截断/防并发/防 symlink 目标覆盖）；同内容幂等；同名不同内容替换时重置旧元数据。
 pub fn import_from_path(src: &str) -> Result<String, String> {
     let src = src.trim();
     if src.is_empty() {
         return Err("先填写模型文件路径".into());
     }
-    let src_path = Path::new(src);
+    // 仅展开 ~ 与 ~/（不做 shell 式任意展开）
+    let src_path = if src == "~" {
+        crate::sysapi::home()
+    } else if let Some(rest) = src.strip_prefix("~/") {
+        crate::sysapi::home().join(rest)
+    } else {
+        PathBuf::from(src)
+    };
     if !src_path.is_file() {
         return Err(format!("文件不存在: {src}"));
     }
@@ -193,19 +216,50 @@ pub fn import_from_path(src: &str) -> Result<String, String> {
     if !name.to_lowercase().ends_with(".dll") {
         return Err("只接受 .dll 文件".into());
     }
+    let len = src_path.metadata().map_err(|e| format!("无法读取文件: {e}"))?.len();
+    if len > 2 << 30 {
+        return Err("文件超过 2GB，疑似导错了文件".into());
+    }
+    let _guard = MODEL_IO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use std::io::Read;
+    let mut f = std::fs::File::open(&src_path).map_err(|e| format!("无法读取文件: {e}"))?;
     let mut head = [0u8; 2];
-    std::fs::File::open(src_path)
-        .and_then(|mut f| f.read_exact(&mut head))
-        .map_err(|e| format!("无法读取文件: {e}"))?;
+    f.read_exact(&mut head).map_err(|e| format!("无法读取文件: {e}"))?;
     if &head != b"MZ" {
         return Err("不是 Windows PE 文件（缺 MZ 头），请确认下载的是模型 dll".into());
     }
+    let mut hasher = Sha256::new();
+    hasher.update(&head); // MZ 头计入哈希，保证与整文件哈希同一起点
+    let mut buf = vec![0u8; 1 << 20]; // 堆分配，理由同 sha256_file
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("读取失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let hex = format!("{:x}", hasher.finalize());
     std::fs::create_dir_all(models_dir()).map_err(|e| e.to_string())?;
     let dst = models_dir().join(&name);
-    if dst.is_file() && sha256_short(&dst) == sha256_short(src_path) {
+    if dst.is_file() && sha256_file(&dst).unwrap_or_default() == hex {
         return Ok(format!("{name} 已在模型库中（内容一致）"));
     }
-    std::fs::copy(src_path, &dst).map_err(|e| format!("导入失败: {e}"))?;
+    // 原子落位：models_dir 内写临时文件，复核落盘内容后 persist（失败自动清理）
+    let tmp = tempfile::Builder::new()
+        .prefix(".import-")
+        .suffix(".tmp")
+        .tempfile_in(models_dir())
+        .map_err(|e| format!("创建临时文件失败: {e}"))?;
+    std::fs::copy(src_path, tmp.path()).map_err(|e| format!("导入失败: {e}"))?;
+    if sha256_file(tmp.path()).unwrap_or_default() != hex {
+        let _ = tmp.close();
+        return Err("导入过程中文件内容发生变化，已中止".into());
+    }
+    tmp.persist(&dst).map_err(|e| format!("提交模型失败: {e}"))?;
+    // 同名不同内容的替换：清掉旧登记，避免 UI 显示过期版本信息
+    let mut lib = read_lib();
+    if lib.remove(&name).is_some() {
+        let _ = write_lib(&lib);
+    }
     Ok(format!("已导入 {name}，点刷新后可在库里切换"))
 }
