@@ -1,6 +1,6 @@
 # dlssnr-suite
 
-**Linux + Proton 下一键上 DLSS 5 神经渲染（NR）的完整方案**：Web 调参面板 + 自动安装器，把原本需要东拼西凑的三件套（helper、Vulkan 层、`nvngx_dlssnr.dll`）整理成一条命令的安装体验。
+**Linux + Proton 下一键上 DLSS 5 神经渲染（NR）的完整方案**：Web 调参面板 + 自动安装器，把原本需要东拼西凑的三件套（helper、Vulkan 层、`nvngx_dlssnr.dll`）整理成一条命令就能装完。
 
 ```bash
 git clone https://github.com/Kuner-mw/dlssnr-suite
