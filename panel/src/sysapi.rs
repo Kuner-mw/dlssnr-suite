@@ -39,6 +39,14 @@ pub fn log_file() -> PathBuf {
     state_dir().join("webui.log")
 }
 
+pub fn unit_dir() -> PathBuf {
+    xdg_dir("XDG_CONFIG_HOME", ".config").join("systemd/user")
+}
+
+pub fn panel_config_dir() -> PathBuf {
+    xdg_dir("XDG_CONFIG_HOME", ".config").join("dlssnr-panel")
+}
+
 pub fn helper_bin() -> PathBuf {
     let user = home().join(".local/bin/dlssnr-helper");
     if user.exists() {
@@ -310,7 +318,7 @@ WantedBy=graphical-session.target
 ";
 
 pub fn service(action: &str) -> Result<serde_json::Value, String> {
-    let unit_dir = home().join(".config/systemd/user");
+    let unit_dir = unit_dir();
     let unit_path = unit_dir.join("dlssnr-panel.service");
     match action {
         "enable" => {

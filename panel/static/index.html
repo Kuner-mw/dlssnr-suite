@@ -428,6 +428,8 @@ const qs = new URLSearchParams(location.search);
 const qsTok = qs.get("token");
 if (qsTok) { localStorage.setItem("dlssnr_token", qsTok); history.replaceState(null,"",location.pathname); }
 let TOKEN = localStorage.getItem("dlssnr_token") || "";
+let tokenPromptSnooze = 0;   // 用户取消令牌弹窗后的冷静期截止时间戳
+let TOKEN_HINT_PATH = "~/.local/state/dlssnr/webui.token";  // 由 /api/hud 按实际路径更新
 
 async function api(path, body) {
   const opt = {method: body===undefined ? "GET":"POST",
@@ -435,6 +437,7 @@ async function api(path, body) {
   if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
   const r = await fetch(path, opt);
   if (r.status===401){
+    if (tokenPromptSnooze > Date.now()) { throw new Error("401"); }  // 用户刚取消：冷静期内不打扰
     const t = await askToken();            // 弹窗获取新令牌（并发 401 合并为一次输入）
     if (t) { opt.headers["X-DLSS-Token"] = t; const rr = await fetch(path, opt);
       if (rr.status===401) { toast("令牌仍无效：请核对 webui.token 内容", true); throw new Error("401"); }
@@ -460,7 +463,7 @@ function askToken(){
     const card = document.createElement("div");
     card.style.cssText = "background:var(--bg,#0b120f);color:var(--text,#d9e4dc);border-radius:20px;padding:22px 24px;max-width:420px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,.5)";
     card.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:8px">🔒 需要访问令牌</div>
-      <div style="font-size:12px;opacity:.8;line-height:1.6;margin-bottom:12px">在面板主机上执行 <span class="mono">cat ~/.local/state/dlssnr/webui.token</span>，把输出的令牌粘贴到这里。</div>
+      <div style="font-size:12px;opacity:.8;line-height:1.6;margin-bottom:12px">在面板主机上执行 <span class="mono">cat ${TOKEN_HINT_PATH}</span>，把输出的令牌粘贴到这里。</div>
       <input id="askTokenInput" class="mono sunken" style="width:100%;padding:9px 12px;font-size:13px" placeholder="粘贴访问令牌" autocomplete="off">
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
         <button class="btn sm" id="askTokenCancel">取消</button>
@@ -473,6 +476,7 @@ function askToken(){
     const done = tok => {
       ov.remove(); askingToken = null;
       if (tok) { localStorage.setItem("dlssnr_token", tok); TOKEN = tok; }
+      else { tokenPromptSnooze = Date.now() + 30000; }  // 用户取消：30s 内不再打扰
       resolve(tok || null);
     };
     card.querySelector("#askTokenOk").onclick = () => done(inp.value.trim());
@@ -527,12 +531,17 @@ function detectStall(st){
   if(hf!==stallTrack.frames){ stallTrack={frames:hf,since:now}; return false; }
   return (now-stallTrack.since)>=10000;
 }
+let pollInFlight = false;
 async function poll(){
+  if (pollInFlight) return;                 // 上一次未返回不叠加（防 401 模态期间请求积压）
+  if (askingToken || tokenPromptSnooze > Date.now()) return;  // 令牌弹窗/冷静期期间暂停轮询
+  pollInFlight = true;
   try{
     const j = await api("/api/status");
     lastStatus = j.status;
     renderStatus(j.status);
-  }catch(e){ return; }  // 后端不可达时不做标签重试
+  }catch(e){ pollInFlight = false; return; }  // 后端不可达时不做标签重试
+  pollInFlight = false;
   // 自愈：激活标签的数据加载失败过 → 周期重试（面板重启窗口/瞬时故障场景）
   const retry = {"filter": loadFilter, "games": loadGames, "model": loadModels, "hud": loadHud};
   const active = [...document.querySelectorAll(".tabs button")].find(b=>b.classList.contains("on"));
@@ -1052,7 +1061,6 @@ async function loadGames(){
         const act=b.dataset.act, id=b.dataset.g;
         if(act==="delete" && !confirm("删除 "+id+" 的游戏档？")) return;
         if(act==="reset" && !confirm("还原该游戏初始参数并应用？")) return;
-        if(act==="reset") act="reset-initial";   // 后端 /api/games 的还原动作为 reset-initial
         if(act==="snap"){
           const gp=GAMES.games.find(x=>x.appid===id); if(!gp) return;
           const filter = confirm("同时把当前 vkBasalt 滤镜配置存入该游戏档？")
@@ -1120,6 +1128,7 @@ function stopHudTimer(){ if(hudTimer){ clearInterval(hudTimer); hudTimer=null; }
 async function loadHud(){
   const j = await api("/api/hud");
   HUDL = j.layout; HUDPH = j.placeholders||[]; HUD_LAYOUT_PATH=j.layout_path||"";
+  try { if (j.token_path) window.TOKEN_HINT_PATH = j.token_path; } catch(e) {}
   renderOverlayStatus(j.ingame_hud || {enabled:false});
   const phc=document.getElementById("phChips");
   phc.innerHTML = HUDPH.map(p=>`<button class="maskchip mono" data-ph="${esc(p)}">{${esc(p)}}</button>`).join(" ");

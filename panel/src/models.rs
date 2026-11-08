@@ -65,11 +65,17 @@ fn read_lib() -> HashMap<String, serde_json::Value> {
 
 fn write_lib(lib: &HashMap<String, serde_json::Value>) -> Result<(), String> {
     std::fs::create_dir_all(models_dir()).map_err(|e| e.to_string())?;
-    std::fs::write(
-        lib_json(),
-        serde_json::to_string_pretty(lib).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    // 原子写：同目录临时文件 + rename，防崩溃/并发读到半截 JSON
+    let tmp = tempfile::Builder::new()
+        .prefix(".library-")
+        .suffix(".json.tmp")
+        .tempfile_in(models_dir())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(tmp.path(), serde_json::to_string_pretty(lib).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    tmp.persist(lib_json())
+        .map_err(|e| format!("提交 library.json 失败: {e}"))?;
+    Ok(())
 }
 
 pub fn scan() -> serde_json::Value {

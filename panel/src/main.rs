@@ -297,9 +297,35 @@ fn route(
             log(format!("settings 写入: {} {} → {n} 处 {persist_msg}",
                       serde_json::to_string(changes).unwrap_or_default(),
                       serde_json::to_string(passes).unwrap_or_default()));
+            let mut final_msg = format!("已写入 {n} 处{persist_msg}");
+            if let Some(g) = games::ACTIVE_GAME.lock().unwrap().clone() {
+                if let Some(mut gp) = games::load_profile(&g) {
+                    for (k, v) in changes {
+                        gp.settings.insert(k.clone(), v.clone());
+                    }
+                    if !passes.is_empty() {
+                        let mut pl = gp.passes.clone();
+                        for (idx, fields) in passes {
+                            if let Ok(ii) = idx.parse::<usize>() {
+                                if ii < defs::MAX_PASSES as usize {
+                                    if let Some(f) = fields.as_object() {
+                                        while pl.len() <= ii { pl.push(serde_json::Map::new()); }
+                                        for (k, v) in f { pl[ii].insert(k.clone(), v.clone()); }
+                                    }
+                                }
+                            }
+                        }
+                        gp.passes = pl;
+                    }
+                    gp.updated_at = chrono_now();
+                    if let Err(e) = games::save_profile(&gp) {
+                        final_msg += &format!("（警告：游戏档回写失败: {e}）");
+                    }
+                }
+            }
             Ok((200, json!({
                 "ok": true, "changed": n, "tuning": tuning,
-                "msg": format!("已写入 {n} 处"),
+                "msg": final_msg,
             })))
         }
         (Method::Post, "/api/settings/persist") => sr(sysapi::snapshot_config(shm)),
@@ -456,6 +482,7 @@ fn route(
                 "ingame_hud": {"enabled": ingame_enabled},
                 "placeholders": metrics::PLACEHOLDERS,
                 "layout_path": hud::layout_path().display().to_string(),
+                "token_path": sysapi::token_file().display().to_string(),
             })))
         }
         (Method::Post, "/api/hud") => {
@@ -545,17 +572,25 @@ fn route(
                             .ok_or((400u16, "patch 缺少 appid".to_string()))?;
                         let mut p = games::load_profile(appid)
                             .ok_or((400u16, format!("档不存在: {appid}")))?;
-                        if let Some(v) = patch.get("name") { p.name = v.as_str().unwrap_or(&p.name).to_string(); }
-                        if let Some(v) = patch.get("auto_helper") { p.auto_helper = v.as_bool().unwrap_or(p.auto_helper); }
-                        if let Some(v) = patch.get("auto_apply") { p.auto_apply = v.as_bool().unwrap_or(p.auto_apply); }
-                        if let Some(v) = patch.get("auto_filter") { p.auto_filter = v.as_bool().unwrap_or(p.auto_filter); }
-                        if let Some(v) = patch.get("auto_close_popups") { p.auto_close_popups = v.as_bool().unwrap_or(p.auto_close_popups); }
+                        if let Some(v) = patch.get("name") {
+                            p.name = v.as_str().ok_or((400u16, "name 须为字符串".to_string()))?.to_string();
+                        }
+                        for k in ["auto_helper", "auto_apply", "auto_filter", "auto_close_popups"] {
+                            if let Some(v) = patch.get(k) {
+                                let b = v.as_bool().ok_or((400u16, format!("{k} 须为布尔")))?;
+                                match k { "auto_helper" => p.auto_helper = b, "auto_apply" => p.auto_apply = b,
+                                          "auto_filter" => p.auto_filter = b, _ => p.auto_close_popups = b }
+                            }
+                        }
                         if let Some(v) = patch.get("popup_titles") {
-                            p.popup_titles = serde_json::from_value(v.clone()).unwrap_or(p.popup_titles);
+                            p.popup_titles = serde_json::from_value(v.clone())
+                                .map_err(|e| (400u16, format!("popup_titles 解析失败: {e}")))?;
                         }
                         if let Some(v) = patch.get("match_exe") {
-                            p.match_exe = serde_json::from_value(v.clone()).unwrap_or(p.match_exe);
+                            p.match_exe = serde_json::from_value(v.clone())
+                                .map_err(|e| (400u16, format!("match_exe 解析失败: {e}")))?;
                         }
+                        p.updated_at = chrono_now();
                         games::save_profile(&p).map_err(|e| (400u16, e))?;
                         log(format!(
                             "游戏档字段更新: {} ({})",
@@ -847,7 +882,10 @@ fn route(
 }
 
 fn profiles_dir() -> PathBuf {
-    sysapi::home().join(".config/dlssnr/profiles")
+    sysapi::config_ini()
+        .parent()
+        .map(|d| d.join("profiles"))
+        .unwrap_or_else(|| sysapi::home().join(".config/dlssnr/profiles"))
 }
 
 fn profiles_list() -> serde_json::Value {
@@ -869,19 +907,17 @@ fn profiles_list() -> serde_json::Value {
 }
 
 fn game_running_any(state: &Arc<AppState>) -> bool {
-    // 档匹配优先；匹配失效（未建档/档删除/换 exe）但层已接管（model_up=1）时
-    // 仍视为有活跃会话，避免安全闸误判为「无游戏」而拆掉正在使用的 helper
+    // 档匹配优先；匹配失效（未建档/档删除/换 exe）时看层进程是否存活——
+    // LAYER_PID 是游戏内注入层的 PID，残留值指向已退出的进程则不算活跃。
+    // 注意不能用 MODEL_UP（空转 helper 也会置 1，会让「停止助手/换模型」永久锁死）。
     if games::list_profiles()
         .iter()
         .any(|p| !p.match_exe.is_empty() && sysapi::game_running(&p.match_exe))
     {
         return true;
     }
-    state
-        .shm
-        .read_u32(defs::status_off::MODEL_UP)
-        .map(|v| v == 1)
-        .unwrap_or(false)
+    let pid = state.shm.read_u32(defs::status_off::LAYER_PID).unwrap_or(0);
+    pid > 0 && std::path::Path::new(&format!("/proc/{pid}")).exists()
 }
 
 fn read_model_lib() -> serde_json::Map<String, serde_json::Value> {

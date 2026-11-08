@@ -1,11 +1,11 @@
 //! 悬浮窗布局模型：持久化 + 白名单校验 + 默认中文布局。
-//! 布局文件 ~/.config/dlssnr-panel/hud-layout.json 由悬浮窗进程轮询 mtime 热加载。
+//! 布局文件由面板写入（panel_config_dir/hud-layout.json），悬浮窗进程轮询 mtime 热加载。
 
 use serde_json::json;
 use std::path::PathBuf;
 
 pub fn layout_path() -> PathBuf {
-    sysapi_home().join(".config/dlssnr-panel/hud-layout.json")
+    crate::sysapi::panel_config_dir().join("hud-layout.json")
 }
 
 pub fn sysapi_home() -> PathBuf {

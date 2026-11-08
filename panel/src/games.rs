@@ -433,8 +433,11 @@ pub fn spawn_watcher(shm: Arc<crate::shm::Shm>) {
             let any_game = list_profiles()
                 .iter()
                 .any(|p| !p.match_exe.is_empty() && crate::sysapi::game_running(&p.match_exe));
-            // shm 层已接管（model_up=1）说明有活跃会话（可能未建档或档匹配失效），不回收
-            let layer_active = shm.read_u32(crate::defs::status_off::MODEL_UP).unwrap_or(0) == 1;
+            // 层进程存活 = 有活跃会话（可能未建档或档匹配失效），不回收；
+            // 用 LAYER_PID 存活判断而非 MODEL_UP（空转 helper 也置 1，会永不回收）
+            let layer_pid = shm.read_u32(crate::defs::status_off::LAYER_PID).unwrap_or(0);
+            let layer_active =
+                layer_pid > 0 && std::path::Path::new(&format!("/proc/{layer_pid}")).exists();
             if !any_game && !layer_active && !crate::sysapi::helper_pids().is_empty() {
                 match crate::sysapi::helper_stop() {
                     Ok(_) => crate::log("启动清理：无游戏在跑，已回收残留 helper"),
@@ -474,7 +477,7 @@ pub fn spawn_watcher(shm: Arc<crate::shm::Shm>) {
                 if running && !was {
                     on_game_up(&shm, &p);
                 } else if !running && was {
-                    on_game_down(&p);
+                    on_game_down(&shm, &p);
                 }
             }
             // 自动关小窗：每轮只列一次窗口（带超时），各运行中档依次匹配关闭
@@ -518,6 +521,10 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(200));
+            }
+            if !alive() {
+                crate::log("auto_link: 游戏在探测末次等待中退出，中止联动");
+                return;
             }
             if !external {
                 match crate::sysapi::helper_start() {
@@ -580,24 +587,43 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
     });
 }
 
-fn on_game_down(p: &GameProfile) {
-    crate::log(format!("检测到游戏退出: {} ({})", crate::log_field(&p.name), crate::log_field(&p.appid)));
-    // 多游戏并存时：只有退出的就是当前联动游戏才清位；且仍有其他游戏在跑时不回收 helper
+fn on_game_down(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
+    crate::log(format!(
+        "检测到游戏退出: {} ({})",
+        crate::log_field(&p.name),
+        crate::log_field(&p.appid)
+    ));
+    // 多游戏并存：转移判断与置位在同一把锁内完成（防启动任务并发抢位后又被清掉）
     let profiles = list_profiles();
     let still_active: Vec<&GameProfile> = profiles
         .iter()
         .filter(|q| q.appid != p.appid && !q.match_exe.is_empty() && crate::sysapi::game_running(&q.match_exe))
         .collect();
-    let cur = ACTIVE_GAME.lock().unwrap().clone();
-    if cur.as_deref() == Some(p.appid.as_str()) {
-        match still_active.first() {
-            Some(next) => {
-                *ACTIVE_GAME.lock().unwrap() = Some(next.appid.clone());
-                crate::log(format!("另一游戏仍在运行（{}），保持 helper 与联动位", next.name));
-                return; // helper 继续服务下一个游戏
+    let mut next: Option<GameProfile> = None;
+    {
+        let mut cur = ACTIVE_GAME.lock().unwrap();
+        if cur.as_deref() == Some(p.appid.as_str()) {
+            match still_active.first() {
+                Some(n) => {
+                    *cur = Some(n.appid.clone());
+                    next = Some((*n).clone());
+                }
+                None => *cur = None,
             }
-            None => *ACTIVE_GAME.lock().unwrap() = None,
         }
+    }
+    if let Some(nb) = next {
+        crate::log(format!(
+            "联动位转移 → {}（helper 继续服务，按新游戏档应用参数）",
+            crate::log_field(&nb.name)
+        ));
+        if nb.auto_apply {
+            match apply_profile(shm, &nb) {
+                Ok(msg) => crate::log(format!("auto_apply(转移): {msg}")),
+                Err(e) => crate::log(format!("auto_apply(转移) 失败: {e}")),
+            }
+        }
+        return; // helper 继续服务下一个游戏
     }
     if still_active.is_empty() && !crate::sysapi::game_running(&p.match_exe) {
         if !STOPPING.swap(true, Ordering::SeqCst) {
