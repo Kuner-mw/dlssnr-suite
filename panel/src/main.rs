@@ -181,7 +181,7 @@ fn handle(state: &Arc<AppState>, mut req: tiny_http::Request) {
     match route(state, &method, &url, &body_json) {
         Ok((code, v)) => respond(req, code, &v),
         Err((code, msg)) => {
-            log(format!("API 错误: {msg}"));
+            log(format!("API 错误: {}", log_field(&msg)));
             respond(req, code, &json!({"ok": false, "error": msg}))
         }
     }
