@@ -15,10 +15,10 @@ DLSS 5 神经渲染（NGX Feature 18，`nvngx_dlssnr.dll`）官方只支持 RTX 
 
 ```mermaid
 flowchart LR
-    G["Vulkan 游戏<br>(Proton/Wine)"] -- "dma-buf 零拷贝" --> L["VK_LAYER_NV_dlssnr<br>(Linux 隐式层)"]
-    L -- "IPC" --> H["dlssnr_helper.exe<br>(Wine 内调 NGX)"]
+    G["Vulkan 游戏 (Proton/Wine)"] -- "dma-buf 零拷贝" --> L["VK_LAYER_NV_dlssnr (Linux 隐式层)"]
+    L -- "IPC" --> H["dlssnr_helper.exe (Wine 内调 NGX)"]
     H -- "写回" --> L
-    P["dlssnr-panel（本项目）<br>Web 面板 :8099 + systemd"] -- "/dev/shm 调参" --> H
+    P["dlssnr-panel（本项目）Web 面板 :8099 + systemd"] -- "/dev/shm 调参" --> H
 ```
 
 - **截取管线**（helper + 层）来自开源项目 [bmitch87/DLSS5VKLayer](https://github.com/bmitch87/DLSS5VKLayer)（AGPL-3.0），本仓库不改不捆绑，由安装脚本从其官方 release 装入（当前 pin `0.3.2-1`）。
