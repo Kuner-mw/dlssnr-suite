@@ -22,7 +22,7 @@ flowchart LR
 ```
 
 - **截取管线**（helper + 层）来自开源项目 [bmitch87/DLSS5VKLayer](https://github.com/bmitch87/DLSS5VKLayer)（AGPL-3.0），本仓库无更改和捆绑，由安装脚本从其官方 release 装入。
-- **神经渲染库**（`nvngx_dlssnr.dll`）是 NVIDIA 专有文件，**本仓库不作存储和分发**：安装脚本运行时从 [RankFTW/rhi-repo](https://github.com/RankFTW/rhi-repo) release 下载 Ada retarget 版（SHA-256 固化校验），也支持 `--dll` 导入自备文件。
+- **神经渲染库**（`nvngx_dlssnr.dll`）是 NVIDIA 专有文件，**本仓库不作存储和分发，安装器也不提供下载**：装好后打开面板【模型】页，按列出的来源自行获取 dll，粘贴路径导入模型库即可。
 - **控制面板**（`panel/`）是本项目：单二进制 Web 面板，调参直写共享内存、按游戏配置档、游戏启动自动联动 helper、vkBasalt 滤镜管理。
 
 ## 面板功能
@@ -38,18 +38,16 @@ flowchart LR
 
 | 项目 | 要求 |
 |---|---|
-| GPU | 面向 RTX 40 系（Ada）；RTX 50 系可用 NVIDIA 原版 dll（`--dll` 导入）；AMD/NVIDIA 更早架构未验证（我没有对应的显卡） |
+| GPU | 面向 RTX 40 系（Ada）；RTX 50 系可用 NVIDIA 原版 dll（自行导入）；AMD/NVIDIA 更早架构未验证（我没有对应的显卡） |
 | 驱动 | NVIDIA 驱动 615+（无需 616.56+） |
 | 运行时 | 带 DXVK-NVAPI 的 Proton（Proton-CachyOS / GE / DW-Proton 等；Valve 官方 Proton 不含 DXVK-NVAPI 栈） |
 | 系统 | x86_64 Linux，systemd 用户会话（可选） |
-| 依赖 | curl / tar（unzip 仅下载 NGX dll 时需要）；编译面板需 Rust（无 Rust 时自动回退下载预编译二进制） |
+| 依赖 | curl / tar；编译面板需 Rust（无 Rust 时自动回退下载预编译二进制） |
 
 ## 安装
 
 ```bash
 ./install.sh                # 全自动（默认从源码编译面板，需 rust；否则下载 release 二进制）
-./install.sh --dll ~/下载/nvngx_dlssnr.dll   # 使用自备 dll
-./install.sh --no-download  # 禁止任何 dll 下载
 ./install.sh --panel-only   # 只装面板，不动上游（已自行管理 DLSS5VKLayer 的高级用法）
 ./install.sh --no-service   # 不注册 systemd 服务（手动 dlssnr-panel serve）
 ./install.sh --force-dlssnr # 检测到已装时仍强制重装用户级
@@ -60,9 +58,10 @@ flowchart LR
 脚本干了些啥？
 
 1. 从 DLSS5VKLayer 官方 release 下载并 `install.sh --user` 安装 helper + Vulkan 隐式层（用户级）；
-2. 获取 `nvngx_dlssnr.dll`（下载并 SHA-256 校验，或导入自备文件）到 `~/.local/share/dlssnr/binaries/`；
-3. 编译并安装面板到 `~/.local/bin/dlssnr-panel`，注册 systemd 用户服务（`http://127.0.0.1:8099`，登录自启）；
-4. 校验 Vulkan 层清单就位，打印启用说明。
+2. 编译并安装面板到 `~/.local/bin/dlssnr-panel`，注册 systemd 用户服务（`http://127.0.0.1:8099`，登录自启）；
+3. 校验 Vulkan 层清单就位，打印启用说明。
+
+NR 模型（`nvngx_dlssnr.dll`）不在安装范围内：装完后打开面板【模型】页，按来源索引自行获取，粘贴本地路径导入模型库。
 
 卸载：
 
@@ -113,7 +112,6 @@ tail -f ~/.local/state/dlssnr/helper.log                     # 逐帧日志
 | 组件 | 来源 | 当前 pin |
 |---|---|---|
 | DLSS5VKLayer | bmitch87/DLSS5VKLayer release | `0.3.2-1` |
-| nvngx_dlssnr.dll | RankFTW/rhi-repo release `dlssnr-310.9.16` | SHA-256 `cdfa6c1e…`（见脚本） |
 | 面板 | 本仓库 CI release / 本地编译 | 随 tag |
 
 > 面板与上游的兼容性由共享内存 ABI 锁保证（magic `GNR2` / version 20，不匹配拒绝写入），pin 升级前请先确认上游未破坏 ABI。

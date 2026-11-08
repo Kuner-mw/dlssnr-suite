@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # dlssnr-suite 一键安装器
-# 装齐三件套：DLSS5VKLayer(helper+Vulkan层) + nvngx_dlssnr.dll + dlssnr-panel
+# 安装：DLSS5VKLayer(helper+Vulkan层) + dlssnr-panel
+# （NR 模型 nvngx_dlssnr.dll 为 NVIDIA 专有文件，本脚本不下载不提供；
+#   请安装后从面板【模型】页列出的来源自行获取，放入模型库目录）
 #
 # 用法:
-#   ./install.sh                  # 全自动（dll 自动下载）
-#   ./install.sh --dll <path>     # 使用自备的 nvngx_dlssnr.dll
-#   ./install.sh --no-download    # 禁止联网下载 dll（须配合 --dll）
-#   ./install.sh --panel-only     # 只装面板，不安装上游 DLSS5VKLayer 与 dll
+#   ./install.sh                  # 全自动
+#   ./install.sh --panel-only     # 只装面板，不安装上游 DLSS5VKLayer
 #   ./install.sh --from-source    # 强制从源码编译面板（默认优先）
 #   ./install.sh --no-service     # 不注册 systemd 用户服务
 #   ./install.sh --force-dlssnr   # 检测到已装上游时仍强制重装用户级
@@ -15,12 +15,8 @@ set -euo pipefail
 # ---------- 版本 pin（升级时只改这里） ----------
 DLSSNR_VER="0.3.2-1"
 DLSSNR_TARBALL_URL="https://github.com/bmitch87/DLSS5VKLayer/releases/download/${DLSSNR_VER}/dlssnr-${DLSSNR_VER}-linux-x86_64.tar.gz"
-DLL_VER="310.9.16"
-DLL_ZIP_URL="https://github.com/RankFTW/rhi-repo/releases/download/dlssnr-${DLL_VER}/nvngx_dlssnr_${DLL_VER}.zip"
 # 上游 DLSS5VKLayer tarball 指纹（升版本时同步更新）
 DLSSNR_TARBALL_SHA256="${DLSSNR_TARBALL_SHA256:-2a5df946ff7054c2c6cdfaffad5c6833bbaaf484c9991affd97a7abf08404ffd}"
-# Ada(RTX 40) retarget 版 nvngx_dlssnr.dll 指纹
-DLL_SHA256="cdfa6c1ec784867182164c7836f324f087b5c9f374d0c9fe46f54999feabf3ed"
 # 发布前改成 "你的用户名/dlssnr-suite"，或运行时用 DLSSNR_SUITE_REPO=<owner/repo> 覆盖
 GH_REPO="${DLSSNR_SUITE_REPO:-Kuner-mw/dlssnr-suite}"
 
@@ -28,14 +24,11 @@ GH_REPO="${DLSSNR_SUITE_REPO:-Kuner-mw/dlssnr-suite}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 BIN_HOME="$HOME/.local/bin"
 DLSSNR_LIB="$HOME/.local/lib/dlssnr"
-BINARIES_DIR="$DATA_HOME/dlssnr/binaries"
 PANEL_BIN="$BIN_HOME/dlssnr-panel"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 LAYER_JSON="$DATA_HOME/vulkan/implicit_layer.d/VK_LAYER_NV_dlssnr.x86_64.json"
 
 # ---------- 参数 ----------
-DLL_FROM=""          # --dll 路径
-NO_DOWNLOAD=0
 FROM_SOURCE=0
 NO_SERVICE=0
 FORCE_DLSSNR=0
@@ -50,8 +43,6 @@ have() { command -v "$1" &>/dev/null; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dll)          DLL_FROM="$2"; shift 2 ;;
-        --no-download)  NO_DOWNLOAD=1; shift ;;
         --panel-only)   PANEL_ONLY=1; shift ;;
         --from-source)  FROM_SOURCE=1; shift ;;
         --no-service)   NO_SERVICE=1; shift ;;
@@ -69,9 +60,6 @@ fetch() { # fetch <url> <out> —— 带重试与断点续传
 # ---------- 步骤 1：前置检查 ----------
 log "检查依赖…"
 for t in curl tar sha256sum; do have "$t" || err "缺少 $t，请先安装"; done
-if [[ $PANEL_ONLY -ne 1 ]]; then
-    have unzip || err "缺少 unzip（解压 dll 压缩包需要），请先安装"
-fi
 ok "依赖齐全"
 
 [[ "$(uname -m)" == "x86_64" ]] || err "仅支持 x86_64（上游 dlssnr 与 NVIDIA NGX 均为 64 位 x86 构建）"
@@ -113,46 +101,11 @@ else
     install_dlssnr
 fi
 
-# ---------- 步骤 3：nvngx_dlssnr.dll（NVIDIA 专有，不入库） ----------
-if [[ $PANEL_ONLY -eq 1 ]]; then
-    warn "--panel-only：跳过 dll（自装上游后可用 dlssnr-helper import-binaries 导入，或重跑本脚本不带 --panel-only）"
-else
-mkdir -p "$BINARIES_DIR"
-DLL_PATH="$BINARIES_DIR/nvngx_dlssnr.dll"
-sha_of() { sha256sum "$1" | awk '{print $1}'; }
+# ---------- NR 模型（nvngx_dlssnr.dll）不入库、不下载 ----------
+# 获取方式：安装完成后打开面板【模型】页，按来源索引自行下载，
+# 粘贴本地路径导入模型库（或手动放入 ~/.local/share/dlssnr/models/）。
 
-if [[ -n "$DLL_FROM" ]]; then
-    # 显式 --dll 优先于已存在文件（允许替换 dll）
-    [[ -f "$DLL_FROM" ]] || err "自备 dll 不存在: $DLL_FROM"
-    head -c 2 "$DLL_FROM" | grep -q "MZ" || err "$DLL_FROM 不是 Windows PE 文件"
-    ACTUAL="$(sha_of "$DLL_FROM")"
-    [[ "$ACTUAL" == "$DLL_SHA256" ]] || warn "指纹与 pin 版本不同（${ACTUAL:0:12}…），按你的要求继续使用"
-    cp -f "$DLL_FROM" "$DLL_PATH"
-    ok "自备 dll 已导入 $BINARIES_DIR"
-elif [[ -f "$DLL_PATH" ]]; then
-    if [[ "$(sha_of "$DLL_PATH")" == "$DLL_SHA256" ]]; then
-        ok "nvngx_dlssnr.dll 已就位且校验一致，跳过"
-    else
-        warn "已存在 nvngx_dlssnr.dll 但指纹与 pin 版本不同（可能是更新版或不同来源），保留不动"
-    fi
-elif [[ $NO_DOWNLOAD -eq 1 ]]; then
-    err "已禁止下载且未提供 --dll <路径>。请自备 nvngx_dlssnr.dll 后重跑：./install.sh --dll /路径/nvngx_dlssnr.dll"
-else
-    log "下载 nvngx_dlssnr ${DLL_VER}（约 183MB，RankFTW/rhi-repo release）…"
-    TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-    fetch "$DLL_ZIP_URL" "$TMP/dll.zip"
-    unzip -q -o "$TMP/dll.zip" -d "$TMP/unz"
-    FOUND="$(find "$TMP/unz" -type f -name 'nvngx_dlssnr.dll' | head -1)"
-    [[ -n "$FOUND" ]] || err "压缩包内未找到 nvngx_dlssnr.dll（上游打包结构可能已变更）"
-    ACTUAL="$(sha_of "$FOUND")"
-    [[ "$ACTUAL" == "$DLL_SHA256" ]] || err "下载的 dll 指纹不匹配（期望 ${DLL_SHA256:0:12}…，实际 ${ACTUAL:0:12}…），已中止以防供应链篡改"
-    cp -f "$FOUND" "$DLL_PATH"
-    ok "nvngx_dlssnr.dll 校验通过并导入 $BINARIES_DIR"
-    rm -rf "$TMP"; trap - EXIT
-fi
-fi  # PANEL_ONLY 短路结束
-
-# ---------- 步骤 4：dlssnr-panel（本项目面板） ----------
+# ---------- 步骤 3：dlssnr-panel（本项目面板） ----------
 log "安装 dlssnr-panel…"
 mkdir -p "$BIN_HOME"
 PANEL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/panel"
@@ -187,7 +140,7 @@ if [[ $built -eq 0 ]] && { [[ ! -d "$PANEL_DIR" ]] || ! have cargo; }; then
     ok "面板已安装到 $PANEL_BIN"
 fi
 
-# ---------- 步骤 5：systemd 用户服务 ----------
+# ---------- 步骤 4：systemd 用户服务 ----------
 if [[ $NO_SERVICE -eq 1 ]]; then
     warn "按要求跳过 systemd 服务（手动运行: $PANEL_BIN serve）"
 else
@@ -258,7 +211,8 @@ cat <<'DONE'
         ~/.local/bin/dlssnr-shmctl /tmp/dlssnr-$(id -u)/shm.bin status
 
  卸载: ./uninstall.sh
- 免责: nvngx_dlssnr.dll 为 NVIDIA 专有库，仅供个人学习
-       使用；本脚本只做下载校验，不存储不再分发。
+ NR 模型: 本脚本不下载模型。打开面板【模型】页，
+       按来源索引自行获取 dll 后在面板内导入入库。
+ 免责: nvngx_dlssnr.dll 为 NVIDIA 专有库，仅供个人学习使用。
 ────────────────────────────────────────────────────
 DONE

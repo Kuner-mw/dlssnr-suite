@@ -346,8 +346,13 @@ a{color:var(--accent);}
     <div class="card">
       <h2><span class="dot"></span>模型库 <button class="btn sm" id="mRefresh" style="margin-left:auto">刷新</button></h2>
       <div id="mLib"></div>
-      <div class="hint">把 <b>nvngx_dlssnr*.dll</b> 放入 <span class="mono" id="mLibDir">~/.local/share/dlssnr/models/</span> 后点刷新。
+      <div class="hint">把 <b>nvngx_dlssnr*.dll</b> 放入 <span class="mono" id="mLibDir">~/.local/share/dlssnr/models/</span> 后点刷新，
+        或在下方粘贴已下载的 dll 路径直接导入。
         切换 = 原子替换 binaries/nvngx_dlssnr.dll（现役 DLL 自动入库留底），<b>重启助手后生效</b>。</div>
+      <div class="row" style="margin:8px 0 0">
+        <input type="text" id="mImportPath" class="mono sunken" placeholder="已下载的模型 dll 完整路径，如 ~/下载/nvngx_dlssnr_310.9.16.dll" style="flex:1">
+        <button class="btn sm acc" id="mImport">导入模型</button>
+      </div>
     </div>
     <div class="card">
       <h2><span class="dot"></span>社区模型推荐</h2>
@@ -921,6 +926,14 @@ async function loadModels(){
   });
 }
 document.getElementById("mRefresh").onclick=async ()=>{ const j=await api("/api/models",{action:"refresh"}); toast("已刷新"); loadModels(); };
+document.getElementById("mImport").onclick=async ()=>{
+  const path=(document.getElementById("mImportPath").value||"").trim();
+  if(!path) return toast("先粘贴模型 dll 的完整路径", true);
+  const r=await api("/api/models",{action:"import", path});
+  toast(r.msg||"已导入");
+  document.getElementById("mImportPath").value="";
+  loadModels();
+};
 
 // helper
 async function hAct(a){ const j=await api("/api/helper",{action:a}); toast(j.msg||(j.ok?"已执行":"被拒绝"), !j.ok); poll(); }

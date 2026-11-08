@@ -400,6 +400,15 @@ fn route(
                     }
                     Ok((200, json!({"ok": true, "models": models::scan()})))
                 }
+                "import" => {
+                    if game_running_any(state) {
+                        return err("游戏正在运行，禁止导入模型（会误杀会话）");
+                    }
+                    let path = body.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let msg = models::import_from_path(path).map_err(|e| (400u16, e))?;
+                    crate::log(format!("模型导入: {msg}"));
+                    Ok((200, json!({"ok": true, "msg": msg, "models": models::scan()})))
+                }
                 _ => err("未知 action"),
             }
         }

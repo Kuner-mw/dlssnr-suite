@@ -174,3 +174,38 @@ fn chrono_stamp() -> String {
     // 2026-01-01 起算的粗略 stamp 即可，精确日期由 log 提供
     format!("d{days}t{:02}{:02}", secs / 3600, (secs % 3600) / 60)
 }
+
+/// 从本机路径导入模型 dll 到模型库（使用者自行下载后粘贴路径导入）。
+/// 校验：存在、.dll 后缀、PE 头；同内容幂等。
+pub fn import_from_path(src: &str) -> Result<String, String> {
+    let src = src.trim();
+    if src.is_empty() {
+        return Err("先填写模型文件路径".into());
+    }
+    let src_path = Path::new(src);
+    if !src_path.is_file() {
+        return Err(format!("文件不存在: {src}"));
+    }
+    let name = src_path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .ok_or("路径异常")?;
+    if !name.to_lowercase().ends_with(".dll") {
+        return Err("只接受 .dll 文件".into());
+    }
+    use std::io::Read;
+    let mut head = [0u8; 2];
+    std::fs::File::open(src_path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .map_err(|e| format!("无法读取文件: {e}"))?;
+    if &head != b"MZ" {
+        return Err("不是 Windows PE 文件（缺 MZ 头），请确认下载的是模型 dll".into());
+    }
+    std::fs::create_dir_all(models_dir()).map_err(|e| e.to_string())?;
+    let dst = models_dir().join(&name);
+    if dst.is_file() && sha256_short(&dst) == sha256_short(src_path) {
+        return Ok(format!("{name} 已在模型库中（内容一致）"));
+    }
+    std::fs::copy(src_path, &dst).map_err(|e| format!("导入失败: {e}"))?;
+    Ok(format!("已导入 {name}，点刷新后可在库里切换"))
+}
