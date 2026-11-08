@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f3ec">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b120f">
+<title>DLSS5 控制面板</title>
+<style>
+/* ── 纯色拟态 Solid Soft-UI：无渐变，正负双向柔和阴影 ───────────────── */
+:root{
+  --bg:#f6f3ec; --surface:#fdfbf6; --sunken:#ece7da;
+  --text:#33322d; --muted:#8b8578; --accent:#5f8f7d; --accent-deep:#43735f;
+  --danger:#b3504a; --ok:#4d8a6a; --warn:#b98a3c;
+  --sh-dark:#dcd5c4; --sh-light:#ffffff;
+  --r:20px;
+}
+html[data-theme="dark"]{
+  --bg:#0b120f; --surface:#141e18; --sunken:#0d1511;
+  --text:#d9e4dc; --muted:#7f9187; --accent:#2dd4bf; --accent-deep:#1fa392;
+  --danger:#e26a5a; --ok:#4cc193; --warn:#d9a55a;
+  --sh-dark:#040706; --sh-light:#1d2c24;
+}
+html[data-theme="auto"]{ /* 由 JS 按 matchMedia 决定实际落点 */ }
+
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font:15px/1.55 -apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;
+  padding:max(10px, env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom));
+}
+.wrap{max-width:620px;margin:0 auto;}
+h1{font-size:19px;margin:8px 2px 2px;font-weight:700;letter-spacing:.3px;}
+.sub{color:var(--muted);font-size:12px;margin:0 2px 12px;}
+.card{
+  background:var(--surface); border-radius:var(--r); padding:14px 16px; margin:14px 0;
+  box-shadow:7px 7px 16px var(--sh-dark), -7px -7px 16px var(--sh-light);
+}
+.sunken{
+  background:var(--sunken); border-radius:14px;
+  box-shadow:inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);
+}
+/* 输入文字跟随主题色（Chromium 默认 color-scheme 会让深色主题下输入值近乎不可读） */
+input:not([type=range]):not([type=checkbox]),select,textarea{color:var(--text);}
+.card h2{font-size:15px;margin:0 0 10px;font-weight:700;display:flex;align-items:center;gap:8px;}
+.card h2 .dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none;
+  box-shadow:2px 2px 4px var(--sh-dark),-2px -2px 4px var(--sh-light);}
+.dot.on{background:var(--ok);} .dot.off{background:var(--danger);} .dot.warn{background:var(--warn);}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0;}
+.lbl{font-size:14px;font-weight:600;}
+.hint{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5;}
+.val{font-variant-numeric:tabular-nums;font-size:13px;font-weight:700;color:var(--accent);
+  background:var(--sunken);border-radius:10px;padding:3px 10px;min-width:56px;text-align:center;
+  box-shadow:inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);}
+
+/* 滑杆 */
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;margin:4px 0;}
+input[type=range]::-webkit-slider-runnable-track{height:12px;border-radius:8px;background:var(--sunken);
+  box-shadow:inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;
+  background:var(--surface);margin-top:-6px;box-shadow:3px 3px 7px var(--sh-dark),-3px -3px 7px var(--sh-light);
+  border:2px solid var(--accent);}
+input[type=range]::-moz-range-track{height:12px;border-radius:8px;background:var(--sunken);}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;background:var(--surface);
+  border:2px solid var(--accent);box-shadow:3px 3px 7px var(--sh-dark),-3px -3px 7px var(--sh-light);}
+
+/* 开关 */
+.sw{position:relative;width:52px;height:28px;border-radius:16px;background:var(--sunken);flex:none;
+  box-shadow:inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);cursor:pointer;transition:.2s;}
+.sw i{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--surface);
+  box-shadow:2px 2px 5px var(--sh-dark),-2px -2px 5px var(--sh-light);transition:.2s;}
+.sw.on{background:var(--accent-deep);} html[data-theme="dark"] .sw.on{background:#17605a;}
+.sw.on i{left:27px;}
+
+/* 分段选择 */
+.seg{display:flex;flex-wrap:wrap;gap:8px;}
+.seg button{border:0;background:var(--surface);color:var(--muted);font-size:13px;font-weight:600;
+  padding:8px 13px;border-radius:13px;cursor:pointer;font-family:inherit;
+  box-shadow:4px 4px 9px var(--sh-dark),-4px -4px 9px var(--sh-light);}
+.seg button.on{color:var(--accent);font-weight:800;
+  box-shadow:inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);}
+
+/* 按钮 */
+.btn{border:0;background:var(--surface);color:var(--text);font-size:14px;font-weight:700;padding:11px 18px;
+  border-radius:15px;cursor:pointer;font-family:inherit;margin:4px 6px 4px 0;
+  box-shadow:5px 5px 11px var(--sh-dark),-5px -5px 11px var(--sh-light);}
+.btn:active{box-shadow:inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);}
+.btn.acc{color:var(--accent-deep);} html[data-theme="dark"] .btn.acc{color:var(--accent);}
+.btn.danger{color:var(--danger);}
+.btn.sm{padding:7px 13px;font-size:13px;border-radius:12px;}
+.btn:disabled{opacity:.42;pointer-events:none;}
+
+/* 徽标 */
+.badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:9px;flex:none;}
+.b-proven{color:var(--ok);background:var(--sunken);box-shadow:inset 1px 1px 3px var(--sh-dark),inset -1px -1px 3px var(--sh-light);}
+.b-rebuild{color:var(--warn);background:var(--sunken);box-shadow:inset 1px 1px 3px var(--sh-dark),inset -1px -1px 3px var(--sh-light);}
+.b-weak{color:var(--muted);background:var(--sunken);box-shadow:inset 1px 1px 3px var(--sh-dark),inset -1px -1px 3px var(--sh-light);}
+
+/* 状态 chips */
+.chips{display:flex;flex-wrap:wrap;gap:8px;}
+.chip{font-size:12px;padding:6px 11px;border-radius:11px;background:var(--sunken);color:var(--text);
+  box-shadow:inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light);}
+.chip b{color:var(--accent);}
+.chip.bad b{color:var(--danger);}
+
+/* 横幅 */
+.banner{border-radius:16px;padding:12px 15px;margin:12px 0;font-size:13px;font-weight:600;line-height:1.6;
+  background:var(--sunken);box-shadow:inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);}
+.banner.red{color:var(--danger);}
+.banner.amber{color:var(--warn);}
+
+/* 标签栏 */
+.tabs{position:sticky;top:0;z-index:20;background:var(--bg);padding:8px 0 4px;display:flex;gap:10px;}
+.tabs button{flex:1;border:0;background:var(--surface);color:var(--muted);font-size:14px;font-weight:700;
+  padding:11px 0;border-radius:16px;cursor:pointer;font-family:inherit;
+  box-shadow:5px 5px 11px var(--sh-dark),-5px -5px 11px var(--sh-light);}
+.tabs button.on{color:var(--accent);
+  box-shadow:inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);}
+.page{display:none;} .page.on{display:block;}
+
+/* 顶栏主题切换 */
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+.themeBtn{border:0;background:var(--surface);border-radius:13px;padding:8px 12px;font-size:15px;cursor:pointer;
+  color:var(--text);box-shadow:4px 4px 9px var(--sh-dark),-4px -4px 9px var(--sh-light);}
+
+details{margin-top:8px;}
+summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--muted);padding:8px 2px;list-style:none;}
+summary::-webkit-details-marker{display:none;}
+summary:before{content:"▸ ";} details[open] summary:before{content:"▾ ";}
+
+.passHead{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13px;}
+.maskchip{border:0;font-family:inherit;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;
+  background:var(--sunken);border-radius:9px;padding:4px 8px;margin:2px;
+  box-shadow:inset 1px 1px 3px var(--sh-dark),inset -1px -1px 3px var(--sh-light);}
+.maskchip.on{color:var(--accent);}
+
+/* LUT 列表 */
+.lut{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:13px;margin:6px 0;cursor:pointer;
+  background:var(--surface);box-shadow:4px 4px 9px var(--sh-dark),-4px -4px 9px var(--sh-light);font-size:13px;}
+.lut.on{color:var(--accent);font-weight:800;
+  box-shadow:inset 3px 3px 6px var(--sh-dark), inset -3px -3px 6px var(--sh-light);}
+.radio{width:16px;height:16px;border-radius:50%;flex:none;background:var(--sunken);
+  box-shadow:inset 2px 2px 4px var(--sh-dark),inset -2px -2px 4px var(--sh-light);}
+.lut.on .radio{background:var(--accent);}
+
+/* toast */
+#toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);max-width:86vw;
+  background:var(--surface);color:var(--text);border-radius:15px;padding:11px 18px;font-size:13px;font-weight:600;
+  box-shadow:7px 7px 18px var(--sh-dark),-7px -7px 18px var(--sh-light),0 0 0 1px var(--sunken);
+  opacity:0;pointer-events:none;transition:.25s;z-index:99;line-height:1.5;}
+#toast.show{opacity:1;}
+#toast.err{color:var(--danger);}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;}
+a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>DLSS5 控制面板</h1>
+      <p class="sub">dlssnr 神经渲染 · vkBasalt 滤镜 · 模型库 · 游戏档 — v2.2 <span class="mono" id="buildTag"></span></p>
+    </div>
+    <button class="themeBtn" id="themeBtn" title="切换主题">◐</button>
+  </div>
+
+  <div class="banner red" id="legacyBanner" style="display:none">
+    ⚠ 检测到旧版桌面 GUI（dlssnr-gui）正在运行：它每秒会把旧参数回写共享内存，覆盖这里的调节。
+    <button class="btn sm danger" id="killGuiBtn">一键关闭旧 GUI</button>
+  </div>
+  <div class="banner" id="activeGameBanner" style="display:none">
+    🎮 联动中：<b id="activeGameName">-</b> — 此游戏启动时已自动应用其配置；现在调整的参数会实时回写到该游戏档。
+  </div>
+  <div class="banner amber" id="quitBanner" style="display:none">
+    ⚠ 共享内存 quit=1：层处于停摆旁路（画面=原画）。点【恢复生效】清除，或按标准顺序重启流程。
+    <button class="btn sm acc" id="resumeBtn">恢复生效</button>
+  </div>
+  <div class="banner amber" id="driftBanner" style="display:none">
+    ⚠ 共享内存中的部分参数与 config.ini 存档不一致（助手重启、外部工具修改或配置尚未同步都可能导致）。
+    <button class="btn sm acc" id="applyCfgBtn">把存档灌回共享内存</button>
+    <button class="btn sm" id="persistBtn">把当前状态存入 config.ini</button>
+  </div>
+
+  <div class="tabs">
+    <button data-page="dlss5" class="on">DLSS5</button>
+    <button data-page="filter">滤镜</button>
+    <button data-page="hud">HUD 编辑器</button>
+    <button data-page="model">模型</button>
+    <button data-page="games">游戏</button>
+  </div>
+
+  <div class="card" id="statusCard">
+    <h2><span class="dot" id="stDot"></span>运行状态 <span class="hint" id="stTime"></span></h2>
+    <div class="chips" id="stChips"></div>
+    <div class="hint" id="stReason" style="margin-top:8px"></div>
+  </div>
+
+  <!-- ═══════════ DLSS5 ═══════════ -->
+  <div class="page on" id="page-dlss5">
+    <div id="groups"></div>
+    <div class="card">
+      <h2><span class="dot"></span>Pass 分层（进阶）</h2>
+      <div class="hint">用法：点亮「覆盖掩码」里的字段（如 intensity）→ 这层就用自己的值，没点的跟全局。
+        例：只想让 Pass0 用更低强度=点亮它的 intensity 再拖数值。没用到的高层 pass 不用管。</div>
+      <div id="passes"></div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>工具与配置档</h2>
+      <button class="btn" id="captureBtn">抓帧 A/B（2 组）</button>
+      <button class="btn" id="capListBtn">查看抓帧目录</button>
+      <div class="hint">用法：游戏跑着时点【抓帧 A/B】→ 存下改前/改后两张图用于对比。差异幅度随场景与参数变化；若差异持续为 0，请结合运行状态检查 NR 是否生效。</div>
+      <div class="hint" id="capHint"></div>
+      <hr style="border:0;border-top:2px solid var(--sunken);margin:10px 0">
+      <div class="row"><span class="lbl">配置档</span>
+        <select id="profSel" class="mono sunken" style="border:0;padding:8px;border-radius:10px;max-width:50%"></select>
+      </div>
+      <button class="btn sm" id="profLoad">载入</button>
+      <button class="btn sm" id="profSave">保存当前</button>
+      <button class="btn sm danger" id="profDel">删除</button>
+      <div class="hint">保存 = 把共享内存当前全部参数（含 30 层）存为 JSON；载入 = 原子写回并按协议触发重建。</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ HUD 编辑器（游戏内自定义 HUD + 全部监控项） ═══════════ -->
+  <div class="page" id="page-hud">
+    <div class="banner">🎨 <b>游戏内自定义 HUD</b>：直接嵌入 MangoHud 的 ImGui，不创建独立悬浮层。窗口大小、面板形状（圆角矩形/椭圆/自绘多边形）、每个参数的显示名与摆放位置都由你定；改完点【保存并应用】，游戏内 ~0.5 秒热重载。FPS/平均/1%低帧使用 MangoHud 原生统计。布局可导出/导入分享。常用监控项（显卡/处理器/内存/帧率/功耗/频率等）在下方「添加」按钮里按需组合，可显示内容取决于硬件、驱动与 MangoHud 的支持情况。</div>
+    <div class="card">
+      <h2><span class="dot" id="ovDot"></span>游戏内 HUD（不创建独立悬浮窗）
+        <button class="btn sm acc" id="ovStart" style="margin-left:auto">开启 HUD</button>
+        <button class="btn sm danger" id="ovStop">热关闭</button></h2>
+      <div class="hint" id="ovStatus">…</div>
+      <div class="row"><span class="lbl">窗口大小（宽 × 高）</span>
+        <input type="number" id="ovW" min="80" max="3840" style="width:80px" class="sunken mono"> ×
+        <input type="number" id="ovH" min="60" max="2160" style="width:80px" class="sunken mono"></div>
+      <div class="row"><span class="lbl">屏幕位置 X / Y</span>
+        <input type="number" id="ovX" style="width:80px" class="sunken mono"> /
+        <input type="number" id="ovY" style="width:80px" class="sunken mono"></div>
+      <div class="hint">位置/大小/字号均为屏幕物理像素（与游戏截图坐标一致，0,0 = 屏幕左上角）。改完点【保存并应用】，游戏内 HUD ~0.5 秒热重载。【开启 HUD】/【热关闭】即 HUD 总开关（写 no_display 热重载，游戏不用重启）。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>画布编辑器
+        <span class="seg" style="margin-left:auto">
+          <button id="modeMove" class="on">移动</button>
+          <button id="modePoly">画多边形</button>
+        </span></h2>
+      <canvas id="hudCanvas" style="touch-action:none;border-radius:14px;width:100%;display:block;cursor:grab"></canvas>
+      <div class="hint" id="canvasHint">移动模式：拖动文字块摆放参数；拖动多边形顶点改形状。画多边形模式：在画布上逐点单击绘制轮廓，再点【完成形状】闭合。画布边界=HUD 边界，窗口外的部分会被裁剪，请留意最下方一行是否完整。</div>
+      <div class="row" style="flex-wrap:wrap">
+        <button class="btn sm acc" id="polyDone">完成形状</button>
+        <button class="btn sm" id="shapeRect">圆角矩形</button>
+        <button class="btn sm" id="shapeEllipse">椭圆</button>
+        <button class="btn sm" id="shapeNone">清除形状</button>
+        <button class="btn sm danger" id="polyClear">清空顶点</button>
+      </div>
+      <div class="row"><span class="lbl">圆角</span><input type="range" id="ovRadius" min="0" max="120" step="2" style="flex:1"><span class="val" id="ovRadiusVal">16</span></div>
+      <div class="row"><span class="lbl">面板填充色 / 不透明度</span>
+        <input type="color" id="ovFill" style="width:44px;height:30px;border:0;background:none">
+        <input type="range" id="ovFillA" min="0" max="100" step="5" style="flex:1"><span class="val" id="ovFillAVal">55%</span></div>
+      <div class="row"><span class="lbl">边框色 / 不透明度 / 宽度</span>
+        <input type="color" id="ovBorder" style="width:44px;height:30px;border:0;background:none">
+        <input type="range" id="ovBorderA" min="0" max="100" step="5" style="flex:1"><span class="val" id="ovBorderAVal">90%</span>
+        <input type="range" id="ovBorderW" min="0" max="12" step="1" style="flex:1"><span class="val" id="ovBorderWVal">2</span></div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>参数项（显示名 / 模板 / 摆放）</h2>
+      <div class="row" style="flex-wrap:wrap"><span class="lbl">添加：</span>
+        <button class="btn sm" data-add="显卡 {gpu_util}% {gpu_temp}度">显卡</button>
+        <button class="btn sm" data-add="显卡频率 {gpu_clock}MHz">显卡频率</button>
+        <button class="btn sm" data-add="处理器 {cpu_util}% {cpu_temp}度">处理器</button>
+        <button class="btn sm" data-add="显存 {gpu_mem} / {gpu_mem_total} GiB">显存</button>
+        <button class="btn sm" data-add="内存 {ram_used} / {ram_total} GiB {ram_temp}度">内存</button>
+        <button class="btn sm" data-add="交换分区 {swap} GiB">Swap</button>
+        <button class="btn sm" data-add="帧率 {fps}（平均 {fps_avg}）">帧率</button>
+        <button class="btn sm" data-add="1%低帧 {fps_low1} FPS">1%低帧</button>
+        <button class="btn sm" data-add="帧时间 {frametime_ms} ms">帧时间</button>
+        <button class="btn sm" data-add-graph="frametime">帧时间曲线</button>
+        <button class="btn sm" data-add-graph="cpufreq">CPU频率律动条</button>
+        <button class="btn sm" data-add="显卡功耗 {gpu_power}W">功耗</button>
+        <button class="btn sm" data-add="{time}">时间</button>
+        <button class="btn sm" data-add="自定义文本">文本</button>
+      </div>
+      <div id="itemList"></div>
+      <div class="hint">模板里可用占位符（点即插入到当前编辑框）：<span id="phChips"></span>。占位符实时替换成真实数值，例如「显卡 73% 48度」。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>布局管理
+        <button class="btn sm acc" id="hudSave" style="margin-left:auto">保存并应用</button>
+        <button class="btn sm" id="hudLayoutExport">导出布局</button>
+        <button class="btn sm" id="hudLayoutImportBtn">导入布局</button>
+        <button class="btn sm danger" id="hudReset">恢复默认</button>
+        <input type="file" id="hudLayoutImport" accept=".json" style="display:none"></h2>
+      <div class="hint">保存 = 写入布局文件并由游戏内 HUD 热加载。导出/导入 JSON 可与他人分享布局（导入自动校验，非法项会被拒收）。游戏内模式直接复用 MangoHud 的 AVG/1% Low 统计，无需面板日志。</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 滤镜 ═══════════ -->
+  <div class="page" id="page-filter">
+    <div class="banner">⚡ LUT 切换 / 参数调整 / <b>实时开关</b>均 ~2s 生效（无需重启游戏；使用自编译 hot-reload 版 vkBasalt）。⚠ 效果链<b>新增</b>效果（如勾上 dls）需重启游戏；移除实时生效。</div>
+    <div class="card">
+      <h2><span class="dot" id="fEnDot"></span>滤镜开关</h2>
+      <div class="row"><b>实时开关</b>（停用=LUT 直通+锐化归零并记住原值；启用=恢复。~2s 生效，游戏不用重启）</div>
+      <button class="btn sm acc" id="fEnOn">实时启用</button>
+      <button class="btn sm danger" id="fEnOff">实时停用</button>
+      <div class="row" style="margin-top:8px"><b>随游戏启动</b>（写 runner user_settings.py 的 ENABLE_VKBASALT，重启游戏生效）</div>
+      <div id="fEnable"></div>
+      <button class="btn sm acc" id="fLaunchOn">随启动启用</button>
+      <button class="btn sm danger" id="fLaunchOff">随启动停用</button>
+      <div class="hint">runner（compatibilitytools.d）目录的 user_settings.py 自动备份 + py_compile 校验。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>效果链</h2>
+      <div class="row"><span class="lbl">效果链</span><span class="hint">内置：cas 锐化 / dls 锐化降噪 / fxaa 抗锯齿 / smaa 高级抗锯齿 / lut 色彩滤镜 / deband 去色带</span></div>
+      <div class="seg" id="fxSeg"></div>
+      <div class="hint">顺序 = 从左到右执行；当前链：<b class="mono" id="fxChain">-</b></div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>CAS 锐化</h2>
+      <div class="row"><span class="lbl">casSharpness</span><span class="val" id="casVal">-</span></div>
+      <input type="range" id="casRange" min="0" max="1" step="0.05">
+      <div class="hint">数值越大越锐；过高可能出现振铃/白边，建议从中间值起调。DLSS5 页的 sharpness 与 cas 可互补，建议只开其一避免过锐。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>滤镜预设 <button class="btn sm acc" id="presetSaveBtn" style="margin-left:auto">＋ 另存当前</button></h2>
+      <div id="styleSeg" class="chips"></div>
+      <div class="hint">点名字=应用该预设（LUT、效果链与参数一起切换；LUT 与参数可热更新，移除效果实时生效，新增效果需重启游戏）；「改」=把当前面板参数覆盖进该预设；「删」=删除。默认自带写实/梦幻两套。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>效果参数（链内实时可调）</h2>
+      <div id="fxParams"></div>
+      <div class="hint">只显示当前效果链里启用的效果参数，拖动实时生效并写入配置文件；调好后用上方「＋ 另存当前」存成预设。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>其它</h2>
+      <div class="chips" id="fMisc"></div>
+      <div class="hint">配置改动的键值与加载记录写入面板日志：<span class="mono">~/.local/state/dlssnr/webui.log</span>（可看加载的 lut/cas）。</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 模型 ═══════════ -->
+  <div class="page" id="page-model">
+    <div class="card">
+      <h2><span class="dot" id="mActDot"></span>当前激活模型</h2>
+      <div id="mActive" class="hint">…</div>
+      <div class="hint">这张卡=游戏现在真正加载的模型。切了模型但这里没跟着变=还没重启助手。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>模型库 <button class="btn sm" id="mRefresh" style="margin-left:auto">刷新</button></h2>
+      <div id="mLib"></div>
+      <div class="hint">把 <b>nvngx_dlssnr*.dll</b> 放入 <span class="mono" id="mLibDir">~/.local/share/dlssnr/models/</span> 后点刷新。
+        切换 = 原子替换 binaries/nvngx_dlssnr.dll（现役 DLL 自动入库留底），<b>重启助手后生效</b>。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>社区模型推荐</h2>
+      <div class="hint">面板不内置任何模型文件：不同显卡对应的模型由玩家按自己的配置自行下载，放入上方模型库目录即可。以下按显卡架构分类列出官方与第三方社区来源，仅作索引，不构成兼容性、安全性或持续维护保证：<br>
+        · <b>RTX 50 系</b> — <a href="https://www.nvidia.com/en-us/geforce/technologies/dlss/" target="_blank">NVIDIA 官方 DLSS 页面</a>：了解 DLSS 技术与官方发布信息，模型文件以官方发布渠道为准。<br>
+        · <b>RTX 40 系（Ada）</b> — <a href="https://github.com/RankFTW/rhi-repo" target="_blank">RankFTW/rhi-repo</a>：社区重打包（官方 DLL re-target 到 Ada 架构）。<br>
+        · <b>RTX 30 系及更早</b> — <a href="https://github.com/Yasir-Arafat-Shihab/DLSS-NR-ALL" target="_blank">DLSS-NR-ALL</a>：旧架构 DLSS NR 文件合集。<br>
+        · <a href="https://github.com/bmitch87/DLSS5VKLayer" target="_blank">DLSS5VKLayer</a> — Vulkan 层项目主页，Issue 区可查各代显卡的使用反馈。<br>
+        第三方模型请先阅读项目说明、核对来源与哈希后再入库；Vulkan 层路线适用于单人/离线游戏以及反作弊允许该方式的联网游戏。
+      </div>
+    </div>
+    <div class="card">
+      <h2><span class="dot" id="hDot"></span>助手控制</h2>
+      <button class="btn acc" id="hStart">启动助手</button>
+      <button class="btn danger" id="hStop">停止助手</button>
+      <button class="btn" id="hResume">清除退出标记</button>
+      <div class="hint">助手为全局单例，可随时点【启动助手】补拉（重复点击无害，已在运行只会提示）。游戏运行中为防误停会话，【停止助手】会被拒绝。
+        推荐启动顺序：先启动游戏 → 此处启动助手（联动开启时自动，没动就手动点）→ 状态条显示模型已加载即接管 → 若无效点【清除退出标记】。助手就绪约需 15 秒，状态条稍后自动更新。</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 游戏（按游戏配置 + 自启联动） ═══════════ -->
+  <div class="page" id="page-games">
+    <div class="banner amber">🎮 用法实例：在 DLSS5 页调到满意 → 来这页把当前设置存进该游戏档 → 面板运行且档内开关已启用时，该游戏一启动就会按档联动助手、参数和滤镜。调参随时改，改了点【存入当前参数】回写档，下次启动就是上次调的样子。</div>
+    <div class="card">
+      <h2><span class="dot" id="svDot"></span>面板开机自启（systemd 用户服务）
+        <span class="hint" id="svState" style="margin-left:auto"></span></h2>
+      <button class="btn acc" id="svEnable">启用自启</button>
+      <button class="btn danger" id="svDisable">停用自启</button>
+      <div class="hint">绑定图形会话（登录后自动拉起，无需管理员权限）。停止面板进程不影响游戏内已生效的参数。</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>游戏档列表 <button class="btn sm" id="gRefresh" style="margin-left:auto">刷新</button></h2>
+      <div id="gList"></div>
+    </div>
+    <div class="card">
+      <h2><span class="dot"></span>为游戏建档 / 更新</h2>
+      <div class="row" style="margin:0 0 6px"><span class="lbl">启动目录</span></div>
+      <input type="text" id="gLaunchDir" class="mono sunken" placeholder="/home/…/steamapps/compatdata/<appid>" style="width:100%;padding:9px 12px;font-size:13px">
+      <div class="row" style="margin:12px 0 6px"><span class="lbl">游戏本体位置</span></div>
+      <input type="text" id="gGameExe" class="mono sunken" placeholder="/home/…/compatdata/<appid>/pfx/drive_c/…/YuanShen.exe" style="width:100%;padding:9px 12px;font-size:13px">
+      <div class="row" style="margin:12px 0 6px"><span class="lbl">游戏名称</span><span class="hint">可选，留空则取 exe 名</span></div>
+      <input type="text" id="gSnapName" class="sunken" placeholder="如：原神 / 鸣潮 / 幻兽帕鲁" style="width:100%;padding:9px 12px;font-size:13px">
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 0">
+        <button class="btn acc" id="gSnapshot">把当前 shm 设置存为该游戏档</button>
+        <label class="hint" style="display:flex;align-items:center;gap:8px;cursor:pointer;min-height:24px"><input type="checkbox" id="gSnapFilter" style="width:16px;height:16px"> 同时存入当前滤镜配置</label>
+      </div>
+      <div class="hint">存档含：全部 DLSS5 参数 + 30 层 pass；首次存档自动生成「初始快照」供一键还原。appid 取启动目录里 compatdata/<kbd>appid</kbd> 段（填到 …/pfx 也可以），自动关小窗的窗口匹配、前缀定位都按它来。游戏本体可填完整路径或 drive_c 内相对路径。建档后游戏一启动就按档联动（自动 helper / 自动应用 / 自动滤镜 / 自动关小窗）；调参后点档卡【存入当前参数】更新，同一游戏多套参数用【DLSS5】页「配置档」切换。</div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+</div>
+
+<script>
+"use strict";
+// ── 全局错误可见化（面板诊断用）───────────────────────────────────────────
+window.addEventListener("error", e => showFatal(e.message + " @ " + (e.filename||"").split("/").pop() + ":" + e.lineno));
+window.addEventListener("unhandledrejection", e => showFatal(String(e.reason && e.reason.message || e.reason)));
+function showFatal(msg){
+  let b = document.getElementById("fatalBanner");
+  if (!b) { b = document.createElement("div"); b.id = "fatalBanner";
+    b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:999;background:#7a2b26;color:#fff;padding:8px 12px;font-size:12px;";
+    document.body.appendChild(b); }
+  b.textContent = "⚠ 页面错误（请截图反馈）: " + msg;
+  toast("页面错误: " + msg, true);
+}
+
+// ── token ──────────────────────────────────────────────────────────────────
+const BUILD_TAG = "2026-11-08 12:28 universal-panel";
+const qs = new URLSearchParams(location.search);
+const qsTok = qs.get("token");
+if (qsTok) { localStorage.setItem("dlssnr_token", qsTok); history.replaceState(null,"",location.pathname); }
+let TOKEN = localStorage.getItem("dlssnr_token") || "";
+
+async function api(path, body) {
+  const opt = {method: body===undefined ? "GET":"POST",
+    headers:{"X-DLSS-Token": TOKEN}};
+  if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if (r.status===401){ toast("令牌无效：请从终端打印的带令牌地址打开", true); throw new Error("401"); }
+  const j = await r.json();
+  if (!r.ok || j.ok === false) { const msg = j?.error || j?.msg || `HTTP ${r.status}`; toast(msg, true); throw new Error(msg); }
+  return j;
+}
+
+// ── toast ──────────────────────────────────────────────────────────────────
+let toastTimer=null;
+function toast(msg, err){
+  const t=document.getElementById("toast");
+  t.textContent=msg; t.className = "show"+(err?" err":"");
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.className="", 3200);
+}
+
+// ── 主题（自动跟随手机系统 + 手动三态） ─────────────────────────────────────
+const mq = matchMedia("(prefers-color-scheme: dark)");
+let themeMode = localStorage.getItem("dlssnr_theme") || "auto";
+function applyTheme(){
+  const dark = themeMode==="dark" || (themeMode==="auto" && mq.matches);
+  document.documentElement.setAttribute("data-theme", dark?"dark":"light");
+  document.getElementById("themeBtn").textContent = themeMode==="auto"?"◐":(dark?"🌙":"☀");
+}
+mq.addEventListener("change", ()=>{ if(themeMode==="auto") applyTheme(); });
+document.getElementById("themeBtn").onclick = ()=>{
+  themeMode = themeMode==="auto"?"light":(themeMode==="light"?"dark":"auto");
+  localStorage.setItem("dlssnr_theme", themeMode); applyTheme();
+};
+applyTheme();
+
+// ── 标签 ───────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  document.querySelectorAll(".page").forEach(p=>p.classList.toggle("on", p.id==="page-"+b.dataset.page));
+  if (b.dataset.page==="filter") loadFilter();
+  if (b.dataset.page==="games") loadGames();
+  if (b.dataset.page==="model") loadModels();
+  if (b.dataset.page==="hud") startHud(); else stopHudTimer();
+});
+
+// ── 状态轮询 ───────────────────────────────────────────────────────────────
+let lastStatus=null;
+let loadFailures = {};
+// 帧管线停摆检测：助手心跳正常但 helper_frames 冻结（游戏运行中 ≥10s）
+let stallTrack={frames:null,since:0};
+function detectStall(st){
+  const now=Date.now();
+  const hf=st.helper_frames|0;
+  if(!(st.available && st.game_running && st.helper_running && st.model_up===1)){ stallTrack={frames:null,since:0}; return false; }
+  if(hf!==stallTrack.frames){ stallTrack={frames:hf,since:now}; return false; }
+  return (now-stallTrack.since)>=10000;
+}
+async function poll(){
+  try{
+    const j = await api("/api/status");
+    lastStatus = j.status;
+    renderStatus(j.status);
+  }catch(e){ return; }  // 后端不可达时不做标签重试
+  // 自愈：激活标签的数据加载失败过 → 周期重试（面板重启窗口/瞬时故障场景）
+  const retry = {"filter": loadFilter, "games": loadGames, "model": loadModels, "hud": loadHud};
+  const active = [...document.querySelectorAll(".tabs button")].find(b=>b.classList.contains("on"));
+  const page = active && active.dataset.page;
+  if (loadFailures[page] && retry[page]) {
+    retry[page]().then(()=>{ delete loadFailures[page]; }).catch(()=>{});
+  }
+}
+function renderStatus(st){
+  const dot=document.getElementById("stDot");
+  const up = st.available && st.abi_ok && st.model_up===1 && st.quit===0 && st.helper_state===4;
+  dot.className = "dot " + (st.available? (up?"on":(st.quit===1?"warn":"off")) : "off");
+  document.getElementById("stTime").textContent = st.now||"";
+  const chips=[];
+  const stalled=detectStall(st);
+  if(!st.available){ chips.push(`<span class="chip bad"><b>${esc(st.reason||"共享内存不存在")}</b>（先启动助手或游戏）</span>`); }
+  else{
+    if(stalled) chips.push(`<span class="chip bad"><b>⚠ 帧管线停摆</b>（助手在但 ${st.helper_frames|0} 帧后不再消费，游戏画面可能已冻结——建议退出并重启游戏）</span>`);
+    if(st.game_name) chips.push(`<span class="chip">游戏 <b>${esc(st.game_name)}</b></span>`);
+    chips.push(`<span class="chip">分辨率 <b>${st.width}×${st.height}</b></span>`);
+    if(st.helper_liveness==="silent") chips.push(`<span class="chip bad"><b>助手 ⚠ 无响应（进程在但心跳不动）</b></span>`);
+    else if(st.helper_liveness==="running") chips.push(`<span class="chip">助手 <b>${st.helper_state_text}·心跳正常</b></span>`);
+    else chips.push(`<span class="chip">助手 <b>${st.helper_state_text}</b></span>`);
+    chips.push(`<span class="chip ${st.quit===1?"bad":""}">model_up <b>${st.model_up}</b></span>`);
+    chips.push(`<span class="chip">助手帧数 <b>${st.helper_frames}</b></span>`);
+    chips.push(`<span class="chip">layer帧 <b>${st.layer_frames}</b></span>`);
+    if(st.layer_pid) chips.push(`<span class="chip">layer_pid <b>${st.layer_pid}</b></span>`);
+    if(st.eval_ms) chips.push(`<span class="chip">eval <b>${st.eval_ms.toFixed(1)}ms</b></span>`);
+    if(st.vram_mb) chips.push(`<span class="chip">显存 <b>${st.vram_mb}MB</b></span>`);
+    chips.push(`<span class="chip">features <b>${st.features}</b></span>`);
+    chips.push(`<span class="chip">层进程 <b>${st.game_running?"游戏运行中":"未运行"}</b></span>`);
+  }
+  document.getElementById("stChips").innerHTML = chips.join("");
+  document.getElementById("stReason").textContent =
+    (st.helper_reason||st.layer_reason||"").trim();
+  const ag = document.getElementById("activeGameBanner");
+  if (ag) {
+    ag.style.display = st.active_game ? "block":"none";
+    if (st.active_game) document.getElementById("activeGameName").textContent = st.active_game;
+  }
+  document.getElementById("quitBanner").style.display =
+    (st.available && st.quit===1) ? "block":"none";
+  document.getElementById("legacyBanner").style.display =
+    st.legacy_gui_pids && st.legacy_gui_pids.length ? "block":"none";
+  if(st.abi_ok===false && !window._abiWarned){
+    window._abiWarned=true;
+    toast("shm ABI 不匹配（magic/version 变了），面板拒绝写入", true);
+  }
+}
+function esc(s){return String(s).replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));}
+
+document.getElementById("killGuiBtn").onclick = async ()=>{
+  const j = await api("/api/legacy/kill-gui", {});
+  toast(j.msg || (j.ok?"已关闭":"仍在运行")); poll();
+};
+document.getElementById("resumeBtn").onclick = async ()=>{
+  const j = await api("/api/helper", {action:"resume"});
+  toast(j.msg||""); poll();
+};
+document.getElementById("persistBtn").onclick = async ()=>{
+  const j = await api("/api/settings/persist", {});
+  toast(j.msg||""); loadSettings();
+};
+document.getElementById("applyCfgBtn").onclick = async ()=>{
+  if(!confirm("把 config.ini 存档写入共享内存？（助手重建后共享内存是默认值时用它恢复精调参数）")) return;
+  const j = await api("/api/settings/apply-config", {});
+  toast(j.msg||"已应用"); loadSettings(true);
+};
+
+// ── DLSS5 设置渲染 ─────────────────────────────────────────────────────────
+let DEFS=[], OVBITS={}, CUR={}, CURPASSES=[];
+const GROUP_TITLES={core:"核心调节", compose:"合成落地", advanced:"进阶 / 成本", legacy:"皮肤与预设", diag:"诊断与对比工具"};
+
+const debounceMap={};
+const popTimers={};   // 小窗关键词输入防抖
+function postSetting(payload, delay){
+  const k = JSON.stringify(Object.keys(payload));
+  clearTimeout(debounceMap[k]);
+  debounceMap[k] = setTimeout(async ()=>{
+    try{
+      const j = await api("/api/settings", payload);
+      if(j.tuning && j.tuning.length) toast(j.msg);
+      loadSettings(true);
+    }catch(e){ toast("写入失败: "+e.message, true); }
+  }, delay||350);
+}
+
+function ctlRow(d, get, set){
+  const row=document.createElement("div");
+  if(d.kind==="bool" || d.kind==="enum"){
+    row.className="row"; row.style.flexWrap="wrap";
+    const left=document.createElement("div"); left.style.flex="1"; left.style.minWidth="150px";
+    left.innerHTML = `<div class="lbl">${esc(d.label)}</div>${d.tip?`<div class="hint">${esc(d.tip)}</div>`:""}`;
+    row.appendChild(left); addBadge(row, d);
+    if(d.kind==="bool"){
+      const sw=document.createElement("div"); sw.className="sw"+(get()?" on":"");
+      sw.innerHTML="<i></i>";
+      sw.onclick=()=>{ const nv=get()?0:1; sw.classList.toggle("on", !!nv); set(nv); };
+      row.appendChild(sw);
+    }else{
+      const seg=document.createElement("div"); seg.className="seg";
+      d.options.forEach((o,i)=>{
+        const b=document.createElement("button"); b.textContent=o;
+        b.className = Number(get())===i?"on":"";
+        b.onclick=()=>{ seg.querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+          b.classList.add("on"); set(i); };
+        seg.appendChild(b);
+      });
+      row.appendChild(seg);
+    }
+  }else{ // float / int / percent
+    row.style.display="block";
+    const head=document.createElement("div"); head.className="row"; head.style.margin="0 0 2px";
+    const left=document.createElement("div"); left.style.flex="1";
+    left.innerHTML = `<div class="lbl">${esc(d.label)}</div>`;
+    head.appendChild(left); addBadge(head, d);
+    const val=document.createElement("span"); val.className="val";
+    const fmt = v => d.kind==="percent" ? (Number(v).toFixed(0)+"%") : (d.kind==="int" ? v : Number(v).toFixed(2));
+    val.textContent = fmt(get());
+    head.appendChild(val); row.appendChild(head);
+    if(d.tip){ const tip=document.createElement("div"); tip.className="hint"; tip.textContent=d.tip; row.appendChild(tip); }
+    const rng=document.createElement("input");
+    rng.type="range"; rng.min=d.lo; rng.max=d.hi; rng.step=d.step; rng.value=get();
+    rng.oninput = ()=>{ val.textContent = fmt(Number(rng.value)); };
+    rng.onchange = ()=>{ set(Number(rng.value)); };
+    row.appendChild(rng);
+  }
+  return row;
+}
+function addBadge(row, d){
+  const b=document.createElement("span");
+  if(d.effect==="proven"){ b.className="badge b-proven"; b.textContent="✓ 有效"; }
+  else if(d.effect==="weak"){ b.className="badge b-weak"; b.textContent="皮肤/预设"; }
+  else if(d.latch==="at_create"){ b.className="badge b-rebuild"; b.textContent="⇄ 需重建"; }
+  else return;
+  row.appendChild(b);
+}
+
+function renderGroups(){
+  const root=document.getElementById("groups"); root.innerHTML="";
+  const order=["core","compose","advanced","legacy","diag"];
+  for(const g of order){
+    const defs=DEFS.filter(d=>d.group===g);
+    if(!defs.length) continue;
+    const card=document.createElement("div");
+    card.className = g==="legacy"||g==="diag" ? "card" : "card";
+    let h=`<h2><span class="dot"></span>${GROUP_TITLES[g]}</h2>`;
+    if(g==="legacy") h+=`<div class="hint">皮肤与预设相关参数：模型针对真实人脸照片设计（自动识别皮肤区域单独处理）。锐化也可以用【滤镜】页的 cas——两者可配合。</div>`;
+    if(g==="diag") h+=`<div class="hint">对比/调试工具。⚠ 并排对比会全屏分屏，调参前必须 off。</div>`;
+    card.innerHTML=h;
+    for(const d of defs) card.appendChild(ctlRow(d, ()=>CUR[d.id], v=>{ CUR[d.id]=v; postSetting({set:{[d.id]:v}}); }));
+    root.appendChild(card);
+  }
+}
+
+function renderPasses(){
+  // 保留重建前的展开状态，避免每次写参后折叠回去
+  const prevOpen={};
+  document.querySelectorAll("#passes details").forEach((d,i)=>prevOpen[i]=d.open);
+  const root=document.getElementById("passes"); root.innerHTML="";
+  const n = Math.min(30, Math.max(1, Number(CUR.passes)||1));
+  for(let i=0;i<30;i++){
+    const p=CURPASSES[i]||{};
+    const det=document.createElement("details");
+    const active=i<n;
+    if(prevOpen[i]!==undefined) det.open = prevOpen[i];      // 已展开过的保持
+    else if(i<3) det.open = true;                            // 前 3 层默认展开
+    let head=`<summary><span class="passHead">Pass ${i}${active?"":"（未启用）"}</span></summary>`;
+    det.innerHTML=head;
+    const body=document.createElement("div");
+    // 掩码 chips
+    const maskRow=document.createElement("div");
+    maskRow.innerHTML=`<div class="hint" style="margin:6px 0 2px">覆盖掩码（点亮=该字段按本层执行，否则跟随全局）：</div>`;
+    const chips=document.createElement("div");
+    const bitDefs=[["intensity",1],["local_structure",2],["local_tone",4],["skin_structure",8],["style",16],["preset",32],["auto_mask",64],["sharpness",128]];
+    const getMask=()=>Number(p.override_mask)||0;
+    const redraw=()=>{ /* 重画掩码与字段可用性 */ buildFields(); };
+    bitDefs.forEach(([nm,bit])=>{
+      const c=document.createElement("button");
+      c.className="maskchip"+((getMask()&bit)?" on":"");
+      c.textContent=(getMask()&bit)?"● ":"○ "; c.textContent+=nm;
+      c.onclick=async ()=>{
+        const cur=getMask();
+        const nv=(cur&bit)? (cur&~bit) : (cur|bit);
+        p.override_mask=nv;   // 立即落本地，防防抖窗口内连点丢位
+        postPass(i, {override_mask:nv});
+        c.classList.toggle("on", !!(nv&bit));
+        redraw();
+      };
+      chips.appendChild(c);
+    });
+    maskRow.appendChild(chips); body.appendChild(maskRow);
+    const fieldsBox=document.createElement("div"); body.appendChild(fieldsBox);
+    function buildFields(){
+      fieldsBox.innerHTML="";
+      const mask=getMask();
+      for(const f of window.PASSDEFS){
+        if(f.kind==="mask") continue;
+        const bit=OVBITS[f.key]||0;
+        const enabled = (mask&bit)!==0;
+        const row=ctlRow(f, ()=>CURPASSES[i][f.key], v=>{
+          CURPASSES[i][f.key]=v; postPass(i,{[f.key]:v});
+        });
+        if(!enabled){ row.style.opacity=".4"; row.title="未在覆盖掩码中点亮，跟随全局"; }
+        fieldsBox.appendChild(row);
+      }
+    }
+    buildFields();
+    det.appendChild(body);
+    root.appendChild(det);
+  }
+}
+async function postPass(idx, fields, delay){
+  clearTimeout(debounceMap["p"+idx+Object.keys(fields)]);
+  debounceMap["p"+idx+Object.keys(fields)] = setTimeout(async ()=>{
+    try{ await api("/api/settings", {passes:{[idx]:fields}}); loadSettings(true); }
+    catch(e){ toast("pass 写入失败: "+e.message, true); }
+  }, 350);
+}
+
+let settingsLoaded=false;
+async function loadSettings(silent){
+  try{
+    const j = await api("/api/settings");
+    if(!j.available){ document.getElementById("groups").innerHTML=
+      `<div class="banner amber">共享内存不可用：先在【模型】页点【启动助手】（开启自动联动的游戏，启动游戏后助手会自动拉起；游戏已在跑而助手没动时，手动点一下即可补上）。</div>`; return; }
+    DEFS=j.defs; OVBITS=j.override_bits; window.PASSDEFS=j.pass_defs;
+    CUR=j.global; CURPASSES=j.passes;
+    renderGroups(); renderPasses();
+    const driftKeys=Object.entries(j.drift||{}).filter(([k,v])=>v).map(([k])=>k);
+    document.getElementById("driftBanner").style.display = driftKeys.length?"block":"none";
+    settingsLoaded=true;
+    if(!silent) toast("设置已载入");
+  }catch(e){}
+}
+
+// ── 抓帧 ───────────────────────────────────────────────────────────────────
+document.getElementById("captureBtn").onclick = async ()=>{
+  const j = await api("/api/capture", {n:2});
+  document.getElementById("capHint").textContent = j.msg + " 若 after-vs-before 差异持续为 0，请结合运行状态检查 NR 是否生效。";
+  toast("抓帧请求已发出");
+};
+document.getElementById("capListBtn").onclick = async ()=>{
+  const j = await api("/api/captures");
+  document.getElementById("capHint").innerHTML =
+    "目录 <span class='mono'>"+esc(j.dir)+"</span><br>" +
+    (j.captures.length? j.captures.map(c=>esc(c.name)+" ("+c.size_kb+"KB, "+c.mtime+")").join("<br>") : "（空）");
+};
+
+// ── 配置档 ─────────────────────────────────────────────────────────────────
+async function refreshProfiles(){
+  const j = await api("/api/profiles");
+  const sel=document.getElementById("profSel");
+  sel.innerHTML = j.profiles.map(p=>`<option>${esc(p.name)}</option>`).join("") || "<option>（空）</option>";
+}
+document.getElementById("profSave").onclick = async ()=>{
+  const name = prompt("配置档名称：", "我的配置");
+  if(!name) return;
+  await api("/api/profiles", {action:"save", name});
+  toast("已保存: "+name); refreshProfiles();
+};
+document.getElementById("profLoad").onclick = async ()=>{
+  const name=document.getElementById("profSel").value;
+  if(!name || name.startsWith("（")) return toast("先选择配置档", true);
+  const j = await api("/api/profiles", {action:"load", name});
+  toast(j.msg||"已载入"); loadSettings(true);
+};
+document.getElementById("profDel").onclick = async ()=>{
+  const name=document.getElementById("profSel").value;
+  if(!name || name.startsWith("（")) return;
+  if(!confirm("删除配置档 "+name+"？")) return;
+  await api("/api/profiles", {action:"delete", name});
+  toast("已删除"); refreshProfiles();
+};
+
+// ── 滤镜 ───────────────────────────────────────────────────────────────────
+const FX=["cas","lut","dls","fxaa","smaa","deband"];
+let FILTER=null;
+async function loadFilter(){
+  let j;
+  try { j = await api("/api/filter"); } catch(e){ loadFailures.filter=true; throw e; }
+  try {
+  FILTER=j.filter;
+  // 启用状态
+  document.getElementById("fEnable").innerHTML = j.enable.map(e=>
+    `<div class="chip" style="margin:3px">${e.enabled===null?"找不到键":(e.enabled?"✅ 启用":"⛔ 停用")} <span class="mono">${esc(e.path.split("/").slice(-4).join("/"))}</span></div>`
+  ).join("");
+  const liveOn = FILTER.live_enabled===true;
+  document.getElementById("fEnDot").className = "dot "+(liveOn?"on":"off");
+  // 效果链
+  const chain=(FILTER.effects||"").split(":").map(s=>s.trim()).filter(Boolean);
+  document.getElementById("fxChain").textContent = FILTER.effects||"-";
+  const seg=document.getElementById("fxSeg"); seg.innerHTML="";
+  FX.forEach(fx=>{
+    const b=document.createElement("button");
+    b.textContent=(chain.includes(fx)?"✓ ":"")+fx;
+    b.className=chain.includes(fx)?"on":"";
+    b.onclick=()=>{
+      const cur=(FILTER.effects||"").split(":").map(s=>s.trim()).filter(Boolean);
+      const ni=cur.includes(fx)?cur.filter(x=>x!==fx):cur.concat([fx]);
+      const nv=ni.join(":");
+      const msg=nv?`已写 effects=${nv}${ni.length>cur.length?"。⚠ 新增效果需重启游戏才可见（热重载只支持移除效果）":"（移除效果实时生效）"}`:"效果链已全部清空 = 画面直通（实时生效）";
+      api("/api/filter",{set:{effects:nv}}).then(()=>{toast(msg);loadFilter();});
+    };
+    seg.appendChild(b);
+  });
+  // cas
+  const cas=parseFloat(FILTER.cas_sharpness||"0.45");
+  document.getElementById("casVal").textContent=cas.toFixed(2);
+  const rng=document.getElementById("casRange");
+  rng.value=cas;
+  rng.onchange=()=>{
+    api("/api/filter",{set:{casSharpness:Number(rng.value)}})
+      .then(()=>toast("casSharpness="+Number(rng.value).toFixed(2)+"（实时生效）"));
+    document.getElementById("casVal").textContent=Number(rng.value).toFixed(2);
+  };
+  rng.oninput=()=>document.getElementById("casVal").textContent=Number(rng.value).toFixed(2);
+  // 滤镜预设：应用/改/删 + 另存当前（数据来自后端）
+  const presets=FILTER.presets||[];
+  const segS=document.getElementById("styleSeg"); segS.innerHTML="";
+  // 当前生效 LUT 文件显式展示（避免"勾了但不知道用的哪个"）
+  const curLine=document.createElement("div"); curLine.className="hint";
+  const liveTag = FILTER.live_enabled===false ? ' <span style="color:#b0423c">⛔ 已实时停用（直通）</span>' : '';
+  curLine.innerHTML=`当前生效：LUT <b class="mono">${esc(FILTER.lut_name||"—")}</b> · 链 <b class="mono">${esc(FILTER.effects||"(空)")}</b> · cas <b class="mono">${esc(FILTER.cas_sharpness||"—")}</b>${liveTag}`;
+  segS.appendChild(curLine);
+  // 命中判定 = LUT 系列最高版文件名精确相等 + 效果链一致 + cas 一致；只亮第一个
+  let firstOn=false;
+  presets.forEach(pr=>{
+    const wrap=document.createElement("span");
+    wrap.style.cssText="display:inline-flex;align-items:center;gap:4px;margin:3px";
+    const presetCas=(pr.params&&pr.params.casSharpness!=null)?pr.params.casSharpness:pr.cas;
+    const curCas=Number(FILTER.cas_sharpness);
+    const casOk=presetCas==null?true:(Number.isFinite(curCas)&&Number.isFinite(Number(presetCas))&&Math.abs(curCas-Number(presetCas))<1e-3);
+    const on=!!pr.lut&&FILTER.lut_series===pr.lut
+      &&(pr.effects==null||pr.effects===FILTER.effects)
+      &&casOk&&!firstOn;
+    if(on) firstOn=true;
+    const b=document.createElement("button");
+    b.textContent=(on?"✓ ":"")+pr.name;
+    b.className="maskchip"+(on?" on":"");
+    b.onclick=()=>api("/api/filter/presets",{action:"apply",name:pr.name})
+      .then(r=>{toast(r.msg);loadFilter();}).catch(e=>{});
+    const up=document.createElement("button"); up.className="btn sm"; up.textContent="改"; up.title="用当前参数覆盖该预设";
+    up.onclick=()=>{ if(!confirm(`把当前效果参数覆盖进预设「${pr.name}」？`))return;
+      api("/api/filter/presets",{action:"update",name:pr.name})
+        .then(r=>{toast(r.msg);loadFilter();}).catch(e=>{}); };
+    const del=document.createElement("button"); del.className="btn sm danger"; del.textContent="删";
+    del.onclick=()=>{ if(!confirm(`删除预设「${pr.name}」？`))return;
+      api("/api/filter/presets",{action:"delete",name:pr.name})
+        .then(r=>{toast(r.msg);loadFilter();}).catch(e=>{}); };
+    wrap.append(b,up,del); segS.appendChild(wrap);
+  });
+  document.getElementById("presetSaveBtn").onclick=()=>{
+    const name=prompt("预设名称（1~24 字符）：");
+    if(!name) return;
+    api("/api/filter/presets",{action:"save",name})
+      .then(r=>{toast(r.msg);loadFilter();}).catch(e=>{});
+  };
+  // 效果参数滑杆：只渲染链内效果的参数
+  const chainSet=new Set((FILTER.effects||"").split(":").map(x=>x.trim()).filter(Boolean));
+  const fxOf=k=>["cas","dls","fxaa","smaa","deband"].find(fx=>k.startsWith(fx))||"";
+  const box=document.getElementById("fxParams"); box.innerHTML="";
+  const rows=(FILTER.param_rules||[]).filter(r=>chainSet.has(fxOf(r.key)));
+  if(!rows.length){ box.innerHTML='<div class="hint">'+((FILTER.effects||"").trim()?"当前效果链没有可调参数。":"效果链为空 = 滤镜直通（画面不做后处理）。")+'</div>'; }
+  rows.forEach(r=>{
+    const row=document.createElement("div"); row.className="row"; row.style.margin="6px 0";
+    const cur=(FILTER.params||{})[r.key] ?? Number(r.def);
+    row.innerHTML=`<span class="lbl mono" style="min-width:220px">${esc(r.key)}</span>
+      <input type="range" min="${r.min}" max="${r.max}" step="${r.step}" value="${cur}" style="flex:1">
+      <span class="val mono" style="min-width:52px;text-align:right">${cur}</span>`;
+    const rng=row.querySelector("input"), val=row.querySelector(".val");
+    rng.oninput=()=>val.textContent=rng.value;
+    rng.onchange=()=>{
+      api("/api/filter",{set:{[r.key]:Number(rng.value)}})
+        .then(()=>toast(`${r.key}=${rng.value}（实时生效）`)).catch(e=>{});
+    };
+    box.appendChild(row);
+  });
+  if(chainSet.has("smaa")){
+    const er=document.createElement("div"); er.className="row"; er.style.margin="6px 0";
+    er.innerHTML=`<span class="lbl mono" style="min-width:220px">smaaEdgeDetection</span>`;
+    const sel=document.createElement("select");
+    ["luma","color","depth"].forEach(o=>{
+      const op=document.createElement("option"); op.value=o; op.textContent=o;
+      if(((FILTER.params||{}).smaaEdgeDetection||"luma")===o) op.selected=true;
+      sel.appendChild(op);
+    });
+    sel.onchange=()=>api("/api/filter",{set:{smaaEdgeDetection:sel.value}})
+      .then(()=>toast("smaaEdgeDetection="+sel.value)).catch(e=>{});
+    er.appendChild(sel); box.appendChild(er);
+  }
+  window.FILTER_EFFECTS_CACHE = FILTER.effects||"";
+  window.FILTER_CAS_CACHE = FILTER.cas_sharpness||"";
+  window.FILTER_LUT_CACHE = FILTER.lut_file||"";
+  // 其它
+  document.getElementById("fMisc").innerHTML =
+    `<span class="chip">开关快捷键 <b>${esc(FILTER.toggle_key)}</b>（游戏内切换）</span>`+
+    `<span class="chip">启动时启用 <b>${esc(FILTER.enable_on_launch)}</b></span>`;
+  } catch(e){ loadFailures.filter=true; throw e; }
+  delete loadFailures.filter;
+}
+document.getElementById("fEnOn").onclick=async ()=>{ const j=await api("/api/filter/enable",{enable:true}); toast(j.msg||"已实时启用"); loadFilter(); };
+document.getElementById("fEnOff").onclick=async ()=>{ const j=await api("/api/filter/enable",{enable:false}); toast(j.msg||"已实时停用"); loadFilter(); };
+document.getElementById("fLaunchOn").onclick=async ()=>{ const j=await api("/api/filter/launch",{enable:true}); toast(j.msg); loadFilter(); };
+document.getElementById("fLaunchOff").onclick=async ()=>{ const j=await api("/api/filter/launch",{enable:false}); toast(j.msg); loadFilter(); };
+
+// ── 模型 ───────────────────────────────────────────────────────────────────
+async function loadModels(){
+  const j = await api("/api/models");
+  const m=j.models, act=m.active;
+  document.getElementById("mLibDir").textContent=m.library_dir;
+  const dot=document.getElementById("mActDot");
+  dot.className="dot "+(act?"on":"off");
+  document.getElementById("mActive").innerHTML = act?
+    `${esc(act.label)} ${act.version?esc(act.version):""}<br>`+
+    `${act.size_mb}MB · 改于 ${esc(act.mtime)} · sha256 ${esc(act.sha256)}<br>`+
+    `${act.from_library?"✓ 与模型库条目匹配":"⚠ 未入库（可在切换时自动留底）"} · binaries: <span class="mono">${esc(m.binaries_dir)}</span>`
+    : "binaries 里没有 nvngx_dlssnr.dll —— 助手将报「找不到模型」。";
+  const lib=document.getElementById("mLib"); lib.innerHTML="";
+  if(!m.library.length){ lib.innerHTML=`<div class="hint">库为空。把 DLL 放入 <span class="mono">${esc(m.library_dir)}</span> 后刷新。</div>`; }
+  m.library.forEach(it=>{
+    const cur = act && it.sha256===act.sha256;
+    const d=document.createElement("div"); d.className="lut"+(cur?" on":"");
+    d.innerHTML=`<span class="radio"></span><span style="flex:1">${esc(it.label||it.file)}
+      <span class="hint">${it.version?esc(it.version)+" · ":""}${it.target?esc(it.target)+" · ":""}${it.size_mb}MB · 校验 ${esc(it.sha256)}</span></span>`;
+    d.onclick=async ()=>{
+      if(cur) return toast("已是当前激活模型");
+      if(!confirm("切换到 "+(it.label||it.file)+"？\n（现役 DLL 自动留底；重启助手后生效）")) return;
+      const r=await api("/api/models",{action:"activate", name:it.file});
+      toast(r.msg||"已切换"); loadModels();
+    };
+    lib.appendChild(d);
+  });
+}
+document.getElementById("mRefresh").onclick=async ()=>{ const j=await api("/api/models",{action:"refresh"}); toast("已刷新"); loadModels(); };
+
+// helper
+async function hAct(a){ const j=await api("/api/helper",{action:a}); toast(j.msg||(j.ok?"已执行":"被拒绝"), !j.ok); poll(); }
+document.getElementById("hStart").onclick=()=>hAct("start");
+document.getElementById("hStop").onclick=()=>hAct("stop");
+document.getElementById("hResume").onclick=()=>hAct("resume");
+
+// ── 游戏（按游戏配置） ──────────────────────────────────────────────────────
+let GAMES=null;
+async function loadGames(){
+  let j;
+  try { j = await api("/api/games"); } catch(e){ loadFailures.games=true; throw e; }
+  GAMES = j;
+  api("/api/service", {action:"status"}).then(sv=>{
+    document.getElementById("svState").textContent = sv.service.enabled ? "已启用" : "未启用";
+    document.getElementById("svDot").className = "dot " + (sv.service.enabled?"on":"off");
+  }).catch(()=>{});
+  // 档列表
+  const list=document.getElementById("gList"); list.innerHTML="";
+  if(!j.games.length) list.innerHTML = '<div class="hint">还没有游戏档。下方填「启动目录」和「游戏本体位置」→「把当前 shm 设置存为该游戏档」即可建档。</div>';
+  j.games.forEach(g=>{
+    const card=document.createElement("div");
+    card.style.cssText="border-top:2px solid var(--sunken);padding:10px 0;";
+    const sw=(key,on,label)=>`<span class="seg" style="display:inline-flex;margin-left:6px">
+      <button data-g="${esc(g.appid)}" data-k="${key}" class="${on?"on":""}" style="padding:4px 10px;font-size:12px">${label} ${on?"开":"关"}</button></span>`;
+    card.innerHTML = `<div class="passHead">🎮 ${esc(g.name)} <span class="mono hint">${esc(g.appid)}</span>
+      <span class="hint">匹配: ${esc((g.match_exe||[]).join(", ")||"—")}</span></div>
+      <div style="margin:6px 0">${sw("auto_helper", g.auto_helper, "自动helper")}${sw("auto_apply", g.auto_apply, "自动应用")}${sw("auto_filter", g.auto_filter, "自动滤镜")}${sw("auto_close_popups", g.auto_close_popups, "自动关小窗")}</div>
+      <div class="hint" style="margin:2px 0 4px">关小窗关键词（逗号分隔，游戏运行中按窗口标题含匹配即关）：<input class="sunken" data-popupt="${esc(g.appid)}" value="${esc(Array.isArray(g.popup_titles)?g.popup_titles.join("，"):"公告")}" style="width:40%"></div>
+      <div class="hint">${Object.keys(g.settings||{}).length} 项参数 · ${g.passes?.length||0} 层 pass · 滤镜: ${g.filter? esc(g.filter.effects||"—"):"未配"}</div>`;
+    const btns=document.createElement("div"); btns.className="row"; btns.style.margin="6px 0 0";
+    btns.innerHTML = `<button class="btn sm acc" data-act="apply" data-g="${esc(g.appid)}">立即应用</button>
+      <button class="btn sm" data-act="snap" data-g="${esc(g.appid)}">存入当前参数</button>
+      <button class="btn sm" data-act="reset" data-g="${esc(g.appid)}">还原初始参数</button>
+      <button class="btn sm danger" data-act="delete" data-g="${esc(g.appid)}">删除档</button>`;
+    card.appendChild(btns);
+    card.querySelectorAll("button[data-k]").forEach(b=>{
+      b.onclick = async ()=>{
+        const gp = GAMES.games.find(x=>x.appid===b.dataset.g); if(!gp) return;
+        gp[b.dataset.k] = !gp[b.dataset.k];
+        const r = await api("/api/games", {action:"update", profile: gp});
+        toast(r.msg||"已更新"); loadGames();
+      };
+    });
+    card.querySelectorAll("input[data-popupt]").forEach(inp=>{
+      const savePopups = async ()=>{
+        clearTimeout(popTimers[inp.dataset.popupt]);
+        const gp = GAMES.games.find(x=>x.appid===inp.dataset.popupt); if(!gp) return;
+        gp.popup_titles = inp.value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+        try{
+          const r = await api("/api/games", {action:"update", profile: gp});
+          toast(r.msg||"已更新");
+        }catch(e){ toast("小窗关键词保存失败: "+e.message, true); }
+      };
+      // 即输即存（600ms 防抖），失焦兜底；不重渲染卡片，避免打字中被清空
+      inp.oninput = ()=>{ clearTimeout(popTimers[inp.dataset.popupt]); popTimers[inp.dataset.popupt]=setTimeout(savePopups, 600); };
+      inp.onchange = savePopups;
+    });
+    card.querySelectorAll("button[data-act]").forEach(b=>{
+      b.onclick = async ()=>{
+        const act=b.dataset.act, id=b.dataset.g;
+        if(act==="delete" && !confirm("删除 "+id+" 的游戏档？")) return;
+        if(act==="reset" && !confirm("还原该游戏初始参数并应用？")) return;
+        if(act==="snap"){
+          const gp=GAMES.games.find(x=>x.appid===id); if(!gp) return;
+          const filter = confirm("同时把当前 vkBasalt 滤镜配置存入该游戏档？")
+            ? await api("/api/filter").then(j=>{ const f=j.filter||{};
+                return {effects:f.effects||"", casSharpness:f.cas_sharpness||"", lutFile:f.lut_file||""}; })
+            : null;
+          const r = await api("/api/games", {action:"snapshot", appid:id, filter});
+          toast(r.msg||"已保存"); loadGames(); return;
+        }
+        const r = await api("/api/games", {action: act, appid: id});
+        toast(r.msg||"已执行"); loadGames();
+      };
+    });
+    list.appendChild(card);
+  });
+  delete loadFailures.games;
+}
+document.getElementById("gRefresh").onclick = ()=>loadGames().then(()=>toast("已刷新"));
+// 手动建档：启动目录（Steam 前缀）+ 游戏本体 exe，appid 由后端从目录提取并校验存在性
+document.getElementById("gSnapshot").onclick = async ()=>{
+  const btn=document.getElementById("gSnapshot");
+  const dir=(document.getElementById("gLaunchDir").value||"").trim();
+  const exe=(document.getElementById("gGameExe").value||"").trim();
+  if(!dir) return toast("先填启动目录（Steam 库的 steamapps/compatdata/<appid>）", true);
+  if(!exe) return toast("先填游戏本体位置（主程序 exe 路径）", true);
+  const name=(document.getElementById("gSnapName").value||"").trim();
+  btn.disabled=true;
+  try{
+    // 滤镜值实时取后端，避免页面缓存未初始化时存空配置
+    const filter = document.getElementById("gSnapFilter").checked
+      ? await api("/api/filter").then(j=>{ const f=j.filter||{};
+          return {effects:f.effects||"", casSharpness:f.cas_sharpness||"", lutFile:f.lut_file||""}; })
+      : null;
+    const r = await api("/api/games", {action:"snapshot", launch_dir: dir, game_exe: exe, name, filter});
+    toast(r.msg||"已保存");
+    document.getElementById("gSnapName").value="";
+    document.getElementById("gSnapFilter").checked=false;
+    loadGames();
+  }catch(e){ /* api 已 toast 错误，避免重复弹致命条 */ }
+  btn.disabled=false;
+};
+document.getElementById("svEnable").onclick = async ()=>{ const r=await api("/api/service",{action:"enable"}); toast(r.service.msg); loadGames(); };
+document.getElementById("svDisable").onclick = async ()=>{ const r=await api("/api/service",{action:"disable"}); toast(r.service.msg); loadGames(); };
+
+// ── 悬浮窗（自定义 HUD 编辑器）──────────────────────────────────────────────
+let HUDL=null, HUDPH=[], OVMETRICS={}, hudTimer=null, hudMode="move", HUD_LAYOUT_PATH="";
+let dragItem=-1, dragPoint=-1, lastTplInput=null;
+
+function ovFillTemplate(tpl){
+  return String(tpl||"").replace(/\{([a-z_0-9]+)\}/g, (m,k)=>
+    (OVMETRICS[k]!==undefined && OVMETRICS[k]!==null) ? String(OVMETRICS[k]) : "--");
+}
+async function pollMetrics(){
+  try{ const j=await api("/api/metrics"); OVMETRICS=j.metrics||{};
+    if(document.getElementById("page-hud").classList.contains("on")) drawCanvas();
+  }catch(e){}
+}
+async function startHud(){
+  stopHudTimer();
+  try{ await loadHud(); delete loadFailures.hud; }catch(e){ loadFailures.hud=true; }
+  hudTimer=setInterval(pollMetrics, 1000); pollMetrics();
+}
+function stopHudTimer(){ if(hudTimer){ clearInterval(hudTimer); hudTimer=null; } }
+
+async function loadHud(){
+  const j = await api("/api/hud");
+  HUDL = j.layout; HUDPH = j.placeholders||[]; HUD_LAYOUT_PATH=j.layout_path||"";
+  renderOverlayStatus(j.ingame_hud || {enabled:false});
+  const phc=document.getElementById("phChips");
+  phc.innerHTML = HUDPH.map(p=>`<button class="maskchip mono" data-ph="${esc(p)}">{${esc(p)}}</button>`).join(" ");
+  phc.querySelectorAll("[data-ph]").forEach(b=>b.onclick=()=>insertPh(b.dataset.ph));
+  syncWindowInputs(); syncShapeInputs(); renderItemMeta(); drawCanvas();
+}
+async function refreshOverlayStatus(){
+  try{ const j=await api("/api/hud"); renderOverlayStatus(j.ingame_hud || {enabled:false}); }catch(e){}
+}
+function renderOverlayStatus(st){
+  const dot=document.getElementById("ovDot"), el=document.getElementById("ovStatus");
+  if(st && st.enabled){ dot.className="dot on"; el.textContent="游戏内 HUD 已开启（在 MangoHud 内渲染，不创建独立悬浮窗）；保存布局后 ~0.5s 热重载。"; }
+  else{ dot.className="dot off"; el.textContent="游戏内 HUD 已关闭 — 点【开启 HUD】热开启；首次切换到游戏内自定义版需重启游戏一次。"; }
+}
+function clampW(v,lo,hi,def){ v=Math.round(Number(v)); return Number.isFinite(v)? Math.max(lo,Math.min(hi,v)) : def; }
+
+function syncWindowInputs(){
+  const w=HUDL.window;
+  document.getElementById("ovW").value=w.w; document.getElementById("ovH").value=w.h;
+  document.getElementById("ovX").value=w.x; document.getElementById("ovY").value=w.y;
+}
+function syncShapeInputs(){
+  const s=HUDL.shape;
+  document.getElementById("ovRadius").value=s.radius||0; document.getElementById("ovRadiusVal").textContent=s.radius||0;
+  document.getElementById("ovFill").value=(s.fill||"#101418").slice(0,7);
+  document.getElementById("ovFillA").value=Math.round((s.fill_alpha??0.55)*100); document.getElementById("ovFillAVal").textContent=Math.round((s.fill_alpha??0.55)*100)+"%";
+  document.getElementById("ovBorder").value=(s.border||"#57d9c5").slice(0,7);
+  document.getElementById("ovBorderA").value=Math.round((s.border_alpha??0.9)*100); document.getElementById("ovBorderAVal").textContent=Math.round((s.border_alpha??0.9)*100)+"%";
+  document.getElementById("ovBorderW").value=s.border_w??2; document.getElementById("ovBorderWVal").textContent=s.border_w??2;
+}
+
+// ── 画布 ──
+function drawCpuBarsPreview(ctx,it){
+  const freqs=OVMETRICS.cpu_freqs||[];
+  const gw=it.w||260, gh=it.h||44, band=14; // 顶部标签带
+  ctx.save();
+  ctx.strokeStyle=it.color||"#ffd27e"; ctx.lineWidth=1.5; ctx.globalAlpha=.55;
+  ctx.setLineDash([6,4]); ctx.strokeRect(it.x,it.y,gw,gh); ctx.setLineDash([]);
+  ctx.font="12px sans-serif"; ctx.globalAlpha=.9; ctx.fillStyle=it.color||"#ffd27e";
+  ctx.fillText(freqs.length?("每核频率 ×"+freqs.length):"每核频率律动条（暂无数据）", it.x+4, it.y+12);
+  ctx.restore();
+  if(!freqs.length) return;
+  const y0=it.y+band, bh=gh-band;
+  const maxMhz=(it.max_mhz>0)?it.max_mhz:Math.max(...freqs,1)*1.15;
+  const slot=gw/freqs.length, bw=Math.min(Math.max(2,slot-2),slot);
+  ctx.save();
+  ctx.globalAlpha=.22; ctx.strokeStyle=it.color||"#ffd27e"; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(it.x,y0+bh); ctx.lineTo(it.x+gw,y0+bh); ctx.stroke();
+  ctx.globalAlpha=.95; ctx.fillStyle=it.color||"#ffd27e";
+  freqs.forEach((mhz,i)=>{
+    const r=Math.max(0,Math.min(1,mhz/maxMhz));
+    const bx=it.x+i*slot+(slot-bw)/2;
+    if(r<=0){ ctx.globalAlpha=.28; ctx.fillRect(bx, y0+bh-1, bw, 1); ctx.globalAlpha=.95; return; }
+    ctx.fillRect(bx, y0+bh-r*bh, bw, r*bh);
+  });
+  ctx.restore();
+}
+function drawGraphPreview(ctx,it){
+  const samples=OVMETRICS.frame_samples||[];
+  const gw=it.w||220, gh=it.h||48;
+  // 边框+标签常显：游戏没跑/帧日志未激活时也能看见曲线区域并拖动
+  ctx.save();
+  ctx.strokeStyle=it.color||"#57d9c5"; ctx.lineWidth=1.5; ctx.globalAlpha=.55;
+  ctx.setLineDash([6,4]); ctx.strokeRect(it.x,it.y,gw,gh); ctx.setLineDash([]);
+  ctx.font="12px sans-serif"; ctx.globalAlpha=.9; ctx.fillStyle=it.color||"#57d9c5";
+  ctx.fillText(samples.length?"帧时间曲线":"帧时间曲线（暂无帧数据，游戏运行后显示）", it.x+4, it.y+15);
+  ctx.restore();
+  if(!samples.length) return;
+  const maxMs=(it.max_ms>0)?it.max_ms:Math.max(20,...samples);
+  ctx.save();
+  ctx.strokeStyle=it.color||"#57d9c5"; ctx.lineWidth=2; ctx.lineJoin="round";
+  ctx.globalAlpha=.22; ctx.beginPath(); ctx.moveTo(it.x,it.y+gh); ctx.lineTo(it.x+gw,it.y+gh); ctx.stroke();
+  ctx.globalAlpha=1; ctx.beginPath();
+  if(samples.length===1){
+    const py=it.y+gh-Math.max(0,Math.min(1,samples[0]/maxMs))*gh;
+    ctx.arc(it.x,py,2,0,Math.PI*2); ctx.fillStyle=it.color||"#57d9c5"; ctx.fill(); ctx.restore(); return;
+  }
+  samples.forEach((ms,i)=>{
+    const x=it.x+(samples.length>1?i*(gw-1)/(samples.length-1):0);
+    const y=it.y+gh-Math.max(0,Math.min(1,ms/maxMs))*gh;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.stroke(); ctx.restore();
+}
+function roundRectPath(ctx,x,y,w,h,r){
+  r=Math.min(r,w/2,h/2);
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.arcTo(x+w,y,x+w,y+r,r);
+  ctx.lineTo(x+w,y+h-r); ctx.arcTo(x+w,y+h,x+w-r,y+h,r);
+  ctx.lineTo(x+r,y+h); ctx.arcTo(x,y+h,x,y+h-r,r);
+  ctx.lineTo(x,y+r); ctx.arcTo(x,y,x+r,y,r);
+}
+function drawCanvas(){
+  if(!HUDL) return;
+  const cv=document.getElementById("hudCanvas");
+  const w=HUDL.window.w, h=HUDL.window.h;
+  if(cv.width!==w || cv.height!==h){ cv.width=w; cv.height=h; }
+  const ctx=cv.getContext("2d");
+  // 棋盘底（表示透明区域）
+  ctx.fillStyle="#2a2f33"; ctx.fillRect(0,0,w,h);
+  ctx.fillStyle="#343a3f";
+  for(let yy=0; yy<h; yy+=16) for(let xx=0; xx<w; xx+=16)
+    if(((xx+yy)/16)%2===0) ctx.fillRect(xx,yy,16,16);
+  // 形状
+  const sh=HUDL.shape||{};
+  if(sh.kind && sh.kind!=="none"){
+    ctx.save(); ctx.beginPath();
+    if(sh.kind==="rect") roundRectPath(ctx,0,0,w,h,sh.radius||0);
+    else if(sh.kind==="ellipse") ctx.ellipse(w/2,h/2,w/2,h/2,0,0,Math.PI*2);
+    else if(sh.kind==="polygon" && (sh.points||[]).length>=3){
+      sh.points.forEach((p,i)=> i? ctx.lineTo(p[0],p[1]) : ctx.moveTo(p[0],p[1]));
+      ctx.closePath();
+    }
+    if(sh.kind!=="polygon" || (sh.points||[]).length>=3){
+      ctx.globalAlpha=Math.max(0,Math.min(1,sh.fill_alpha??0.55)); ctx.fillStyle=sh.fill||"#101418"; ctx.fill();
+      ctx.globalAlpha=Math.max(0,Math.min(1,sh.border_alpha??0.9)); ctx.lineWidth=Math.max(1,(sh.border_w??2)*2); ctx.strokeStyle=sh.border||"#57d9c5"; ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // 多边形顶点手柄
+  if(sh.kind==="polygon"){
+    ctx.save();
+    (sh.points||[]).forEach(p=>{
+      ctx.beginPath(); ctx.arc(p[0],p[1],5,0,Math.PI*2);
+      ctx.fillStyle="#ffd54a"; ctx.globalAlpha=.95; ctx.fill();
+    });
+    ctx.restore();
+  }
+  // 参数项
+  for(const it of (HUDL.items||[])){
+    if(it.kind==="graph"){ drawGraphPreview(ctx,it); continue; }
+    if(it.kind==="cpu_bars"){ drawCpuBarsPreview(ctx,it); continue; }
+    ctx.font=`600 ${it.size}px "PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif`;
+    ctx.shadowColor="rgba(0,0,0,.9)"; ctx.shadowBlur=2;
+    ctx.fillStyle=it.color||"#e8e4d8";
+    ctx.fillText(ovFillTemplate(it.tpl), it.x, it.y + it.size*0.85);
+    ctx.shadowBlur=0;
+  }
+  // 模式角标
+  ctx.font="12px sans-serif"; ctx.fillStyle="rgba(255,255,255,.72)";
+  ctx.fillText(hudMode==="poly" ? "画多边形模式：单击加顶点 → 完成形状" : `${w}×${h}`, 6, h-6);
+}
+
+function canvasPos(e){
+  const cv=document.getElementById("hudCanvas");
+  const r=cv.getBoundingClientRect();
+  return [ (e.clientX-r.left) * HUDL.window.w / r.width,
+           (e.clientY-r.top) * HUDL.window.h / r.height ];
+}
+function itemHit(i,wx,wy){
+  const it=HUDL.items[i];
+  if(it.kind==="graph") return wx>=it.x-4 && wx<=it.x+(it.w||220)+4 && wy>=it.y-4 && wy<=it.y+(it.h||48)+4;
+  if(it.kind==="cpu_bars") return wx>=it.x-4 && wx<=it.x+(it.w||260)+4 && wy>=it.y-4 && wy<=it.y+(it.h||44)+4;
+  const cv=document.getElementById("hudCanvas"), ctx=cv.getContext("2d");
+  ctx.font=`600 ${it.size}px "PingFang SC","Noto Sans CJK SC",sans-serif`;
+  const tw=ctx.measureText(ovFillTemplate(it.tpl)).width;
+  return wx>=it.x-4 && wx<=it.x+tw+6 && wy>=it.y-2 && wy<=it.y+it.size*1.25;
+}
+function hitPolyPoint(wx,wy){
+  const pts=(HUDL.shape&&HUDL.shape.points)||[];
+  for(let i=0;i<pts.length;i++){
+    if(Math.hypot(pts[i][0]-wx, pts[i][1]-wy) <= 9) return i;
+  }
+  return -1;
+}
+(function bindCanvas(){
+  const cv=document.getElementById("hudCanvas");
+  cv.addEventListener("pointerdown", e=>{
+    if(!HUDL) return;
+    const [wx,wy]=canvasPos(e);
+    if(hudMode==="poly"){
+      HUDL.shape.kind="polygon";
+      HUDL.shape.points.push([Math.round(wx),Math.round(wy)]);
+      drawCanvas(); syncShapeInputs(); return;
+    }
+    dragPoint=hitPolyPoint(wx,wy);
+    if(dragPoint>=0){ cv.setPointerCapture(e.pointerId); cv.style.cursor="grabbing"; return; }
+    for(let i=(HUDL.items||[]).length-1;i>=0;i--){
+      if(itemHit(i,wx,wy)){ dragItem=i; cv.setPointerCapture(e.pointerId); cv.style.cursor="grabbing"; return; }
+    }
+  });
+  cv.addEventListener("pointermove", e=>{
+    if(!HUDL) return;
+    const [wx,wy]=canvasPos(e);
+    if(dragPoint>=0){
+      HUDL.shape.points[dragPoint]=[Math.round(wx),Math.round(wy)]; drawCanvas(); return;
+    }
+    if(dragItem>=0){
+      const it=HUDL.items[dragItem];
+      it.x=Math.round(Math.max(-200,Math.min(HUDL.window.w+200,wx)));
+      it.y=Math.round(Math.max(-100,Math.min(HUDL.window.h+100,wy)));
+      drawCanvas();
+    }
+  });
+  const end=e=>{
+    if(dragItem>=0 || dragPoint>=0){ renderItemMeta(); }
+    dragItem=-1; dragPoint=-1;
+    document.getElementById("hudCanvas").style.cursor=hudMode==="poly"?"crosshair":"grab";
+  };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+})();
+
+// ── 模式与形状控制 ──
+function setMode(m){
+  hudMode=m;
+  document.getElementById("modeMove").classList.toggle("on", m==="move");
+  document.getElementById("modePoly").classList.toggle("on", m==="poly");
+  document.getElementById("hudCanvas").style.cursor = m==="poly" ? "crosshair" : "grab";
+}
+document.getElementById("modeMove").onclick=()=>setMode("move");
+document.getElementById("modePoly").onclick=()=>setMode("poly");
+document.getElementById("polyDone").onclick=()=>{
+  setMode("move");
+  const n=(HUDL.shape.points||[]).length;
+  toast(n>=3 ? `形状完成（${n} 个顶点）` : `顶点只有 ${n} 个，至少 3 个才能构成多边形`, n<3);
+};
+document.getElementById("shapeRect").onclick=()=>{ HUDL.shape.kind="rect"; drawCanvas(); };
+document.getElementById("shapeEllipse").onclick=()=>{ HUDL.shape.kind="ellipse"; drawCanvas(); };
+document.getElementById("shapeNone").onclick=()=>{ HUDL.shape.kind="none"; drawCanvas(); };
+document.getElementById("polyClear").onclick=()=>{ HUDL.shape.points=[]; if(HUDL.shape.kind==="polygon") HUDL.shape.kind="none"; drawCanvas(); };
+
+function bindSlider(id, valId, fn, fmt){
+  const el=document.getElementById(id);
+  el.oninput=()=>{ const v=Number(el.value); if(valId) document.getElementById(valId).textContent=fmt?fmt(v):v; fn(v); drawCanvas(); };
+}
+bindSlider("ovRadius","ovRadiusVal", v=>HUDL.shape.radius=v);
+bindSlider("ovFillA","ovFillAVal", v=>HUDL.shape.fill_alpha=v/100, v=>v+"%");
+bindSlider("ovBorderA","ovBorderAVal", v=>HUDL.shape.border_alpha=v/100, v=>v+"%");
+bindSlider("ovBorderW","ovBorderWVal", v=>HUDL.shape.border_w=v);
+document.getElementById("ovFill").oninput=e=>{ HUDL.shape.fill=e.target.value; drawCanvas(); };
+document.getElementById("ovBorder").oninput=e=>{ HUDL.shape.border=e.target.value; drawCanvas(); };
+
+// ── 窗口本体输入 ──
+[["ovW","w",80,3840],["ovH","h",60,2160],["ovX","x",-4096,8192],["ovY","y",-4096,8192]].forEach(([id,f,lo,hi])=>{
+  document.getElementById(id).oninput=e=>{
+    HUDL.window[f]=clampW(e.target.value,lo,hi,HUDL.window[f]); drawCanvas();
+  };
+});
+
+// ── 参数项列表 ──
+let itemSeq=0;
+function renderItemMeta(){
+  const box=document.getElementById("itemList"); box.innerHTML="";
+  (HUDL.items||[]).forEach((it,i)=>{
+    const row=document.createElement("div"); row.className="row"; row.style.flexWrap="wrap"; row.style.margin="6px 0"; row.style.rowGap="4px";
+    if(it.kind==="graph"){
+      row.style.flexWrap="nowrap"; row.style.overflowX="auto";
+      row.innerHTML=`<span class="lbl mono" style="min-width:22px">${i+1}</span>
+        <span class="lbl" style="min-width:88px">帧时间曲线</span>
+        <input type="number" class="mono" data-f="w" data-i="${i}" value="${it.w||220}" min="16" max="2048" style="width:56px" title="曲线宽度">
+        <input type="number" class="mono" data-f="h" data-i="${i}" value="${it.h||48}" min="8" max="512" style="width:48px" title="曲线高度">
+        <input type="number" class="mono" data-f="x" data-i="${i}" value="${it.x}" style="width:56px" title="X 坐标">
+        <input type="number" class="mono" data-f="y" data-i="${i}" value="${it.y}" style="width:56px" title="Y 坐标">
+        <input type="number" class="mono" data-f="max_ms" data-i="${i}" value="${it.max_ms||0}" min="0" max="1000" style="width:56px" title="纵轴上限 ms，0=自动">
+        <input type="color" data-f="color" data-i="${i}" value="${esc((it.color||"#57d9c5").slice(0,7))}" style="width:36px;height:28px;border:0;background:none;padding:0">
+        <button class="btn sm danger" data-del="${i}">删</button>`;
+      box.appendChild(row);
+      return;
+    }
+    if(it.kind==="cpu_bars"){
+      row.style.flexWrap="nowrap"; row.style.overflowX="auto";
+      row.innerHTML=`<span class="lbl mono" style="min-width:22px">${i+1}</span>
+        <span class="lbl" style="min-width:88px">CPU频率律动条</span>
+        <input type="number" class="mono" data-f="w" data-i="${i}" value="${it.w||260}" min="16" max="2048" style="width:56px" title="条形区宽度">
+        <input type="number" class="mono" data-f="h" data-i="${i}" value="${it.h||44}" min="22" max="512" style="width:48px" title="条形区高度（含 14px 标签带）">
+        <input type="number" class="mono" data-f="x" data-i="${i}" value="${it.x}" style="width:56px" title="X 坐标">
+        <input type="number" class="mono" data-f="y" data-i="${i}" value="${it.y}" style="width:56px" title="Y 坐标">
+        <input type="number" class="mono" data-f="max_mhz" data-i="${i}" value="${it.max_mhz||0}" min="0" max="20000" style="width:64px" title="柱高上限 MHz，0=按当前最大核频自动">
+        <input type="color" data-f="color" data-i="${i}" value="${esc((it.color||"#ffd27e").slice(0,7))}" style="width:36px;height:28px;border:0;background:none;padding:0">
+        <button class="btn sm danger" data-del="${i}">删</button>`;
+      box.appendChild(row);
+      return;
+    }
+    row.innerHTML=`<span class="lbl mono" style="min-width:22px">${i+1}</span>
+      <input type="text" class="mono" data-f="tpl" data-i="${i}" value="${esc(it.tpl)}" style="flex:1;min-width:170px" placeholder="显示模板，如 显卡 {gpu_util}%">
+      <input type="number" class="mono" data-f="x" data-i="${i}" value="${it.x}" style="width:64px" title="X 坐标">
+      <input type="number" class="mono" data-f="y" data-i="${i}" value="${it.y}" style="width:64px" title="Y 坐标">
+      <input type="number" class="mono" data-f="size" data-i="${i}" value="${it.size}" min="8" max="96" style="width:56px" title="字号">
+      <input type="color" data-f="color" data-i="${i}" value="${esc((it.color||"#e8e4d8").slice(0,7))}" style="width:36px;height:28px;border:0;background:none;padding:0">
+      <button class="btn sm danger" data-del="${i}">删</button>`;
+    box.appendChild(row);
+  });
+  box.querySelectorAll("input[data-f]").forEach(inp=>{
+    inp.onfocus=()=>{ if(inp.dataset.f==="tpl") lastTplInput=inp; };
+    inp.oninput=()=>{
+      const it=HUDL.items[+inp.dataset.i]; if(!it) return;
+      const f=inp.dataset.f;
+      if(f==="tpl") it.tpl=inp.value;
+      else if(f==="size") it.size=clampW(inp.value,8,96,it.size);
+      else if(f==="color") it.color=inp.value;
+      else it[f]=clampW(inp.value,-8192,8192,it[f]);
+      drawCanvas();
+    };
+  });
+  box.querySelectorAll("button[data-del]").forEach(b=>{
+    b.onclick=()=>{ HUDL.items.splice(+b.dataset.del,1); renderItemMeta(); drawCanvas(); };
+  });
+}
+document.querySelectorAll("[data-add]").forEach(b=>{
+  b.onclick=()=>{
+    const tpl=b.dataset.add;
+    const n=(HUDL.items||[]).length;
+    HUDL.items.push({
+      id: "item"+Date.now().toString(36)+itemSeq++,
+      tpl,
+      x: 20, y: Math.min(HUDL.window.h-30, 20+n*30),
+      size: 20, color: "#e8e4d8",
+    });
+    renderItemMeta(); drawCanvas();
+  };
+});
+document.querySelectorAll("[data-add-graph]").forEach(b=>{
+  b.onclick=()=>{
+    const n=(HUDL.items||[]).length;
+    const base={ x: 20, y: Math.min(HUDL.window.h-60, 20+n*30), size: 20 };
+    const it = b.dataset.addGraph==="cpufreq"
+      ? { id: "bars"+Date.now().toString(36)+itemSeq++, kind: "cpu_bars", tpl: "", ...base,
+          w: 260, h: 44, max_mhz: 0, color: "#ffd27e" }
+      : { id: "graph"+Date.now().toString(36)+itemSeq++, kind: "graph", tpl: "", ...base,
+          w: 220, h: 52, max_ms: 0, color: "#57d9c5" };
+    HUDL.items.push(it);
+    renderItemMeta(); drawCanvas();
+  };
+});
+function insertPh(ph){
+  const inp=lastTplInput || document.querySelector("#itemList input[data-f='tpl']");
+  if(!inp) return toast("先添加一个参数项", true);
+  const s=inp.selectionStart??inp.value.length, e2=inp.selectionEnd??s;
+  const ins=`{${ph}}`;
+  inp.value=inp.value.slice(0,s)+ins+inp.value.slice(e2);
+  inp.dispatchEvent(new Event("input"));
+  inp.focus(); inp.setSelectionRange(s+ins.length, s+ins.length);
+}
+
+// ── 保存 / 导出 / 导入 / 重置 ──
+document.getElementById("hudSave").onclick=async ()=>{
+  try{
+    const j=await api("/api/hud",{layout:HUDL});
+    HUDL=j.layout; syncWindowInputs(); syncShapeInputs(); renderItemMeta(); drawCanvas();
+    refreshOverlayStatus(); toast(j.msg||"已保存");
+  }catch(e){}
+};
+document.getElementById("hudLayoutExport").onclick=()=>{
+  const blob=new Blob([JSON.stringify(HUDL,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="hud-layout.json"; a.click(); URL.revokeObjectURL(a.href);
+  toast("布局已导出（分享给别人可导入）");
+};
+document.getElementById("hudLayoutImportBtn").onclick=()=>document.getElementById("hudLayoutImport").click();
+document.getElementById("hudLayoutImport").onchange=ev=>{
+  const f=ev.target.files[0]; if(!f) return;
+  if(f.size>64*1024){ toast("布局文件超过 64KB", true); ev.target.value=""; return; }
+  const rd=new FileReader();
+  rd.onload=async ()=>{
+    try{
+      const j=JSON.parse(rd.result);
+      if(!j.window||!Array.isArray(j.items)) throw new Error("格式不对（需要 window+items+shape）");
+      const r=await api("/api/hud",{layout:j});
+      HUDL=r.layout; syncWindowInputs(); syncShapeInputs(); renderItemMeta(); drawCanvas();
+      toast("布局已导入并应用");
+    }catch(e){ toast("导入失败："+e.message, true); }
+  };
+  rd.readAsText(f); ev.target.value="";
+};
+document.getElementById("hudReset").onclick=async ()=>{
+  if(!confirm("恢复默认中文布局？当前布局将被覆盖。")) return;
+  try{
+    const j=await api("/api/hud",{action:"reset"});
+    HUDL=j.layout; syncWindowInputs(); syncShapeInputs(); renderItemMeta(); drawCanvas();
+    toast(j.msg||"已恢复默认");
+  }catch(e){}
+};
+document.getElementById("ovStart").onclick=async ()=>{
+  try{
+    const j=await api("/api/mangohud",{set:{no_display:"false",
+      custom_layout:HUD_LAYOUT_PATH,
+      font_file:"auto",
+      font_glyph_ranges:"chinese",font_scale:"1.0"}});
+    toast(j.msg||"已开启游戏内 HUD"); refreshOverlayStatus();
+  }catch(e){}
+};
+document.getElementById("ovStop").onclick=async ()=>{
+  try{ const j=await api("/api/mangohud",{set:{no_display:"true"}}); toast(j.msg||"已热关闭游戏内 HUD"); refreshOverlayStatus(); }
+  catch(e){}
+};
+
+// ── 启动 ───────────────────────────────────────────────────────────────────
+document.getElementById("buildTag").textContent = BUILD_TAG;
+poll(); loadSettings(true); refreshProfiles();
+setInterval(poll, 2500);
+</script>
+</body>
+</html>

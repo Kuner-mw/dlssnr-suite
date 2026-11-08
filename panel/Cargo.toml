@@ -1,0 +1,18 @@
+[package]
+name = "dlssnr-panel"
+version = "2.2.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+memmap2 = "0.9"
+sha2 = "0.10"
+tempfile = "3"
+libc = "0.2"
+
+[profile.release]
+opt-level = 2
+lto = true
+strip = true

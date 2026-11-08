@@ -1,0 +1,15 @@
+# Rust
+panel/target/
+
+# 安装器工作产物
+*.tar.gz
+*.zip
+nvngx_dlssnr.dll
+
+# 编辑器/系统
+.idea/
+.vscode/
+*.swp
+.DS_Store
+# 运行时令牌保险
+*.token

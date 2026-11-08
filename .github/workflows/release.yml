@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-panel:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build panel
+        working-directory: panel
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          strip panel/target/release/dlssnr-panel
+          cp panel/target/release/dlssnr-panel dlssnr-panel
+          sha256sum dlssnr-panel > dlssnr-panel.sha256
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dlssnr-panel
+            dlssnr-panel.sha256

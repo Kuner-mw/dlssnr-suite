@@ -1,0 +1,263 @@
+diff --git a/src/font.cpp b/src/font.cpp
+index 2f2863a..1ae52a6 100644
+--- a/src/font.cpp
++++ b/src/font.cpp
+@@ -30,8 +30,8 @@ void create_fonts(ImFontAtlas* font_atlas, const overlay_params& params, ImFont*
+       0x0020, 0x00FF, // Basic Latin + Latin Supplement
+       0x2018, 0x201F, // Bunch of quotation marks
+       //0x0100, 0x017F, // Latin Extended-A
+-      //0x2103, 0x2103, // Degree Celsius
+-      //0x2109, 0x2109, // Degree Fahrenheit
++      0x2103, 0x2103, // Degree Celsius
++      0x2109, 0x2109, // Degree Fahrenheit
+       0,
+    };
+    // Load Icon file and merge to exisitng font
+@@ -47,6 +47,10 @@ void create_fonts(ImFontAtlas* font_atlas, const overlay_params& params, ImFont*
+    ImVector<ImWchar> glyph_ranges;
+    ImFontGlyphRangesBuilder builder;
+    builder.AddRanges(font_atlas->GetGlyphRangesDefault());
++   { // ℃/℉（imgui 中文范围不含这两个码点，主字体 range 走 builder）
++      constexpr ImWchar degree_ranges[] = { 0x2103, 0x2103, 0x2109, 0x2109, 0 };
++      builder.AddRanges(degree_ranges);
++   }
+    if (params.font_glyph_ranges & FG_KOREAN)
+       builder.AddRanges(font_atlas->GetGlyphRangesKorean());
+    if (params.font_glyph_ranges & FG_CHINESE_FULL)
+diff --git a/src/fps_metrics.h b/src/fps_metrics.h
+index 3d900d7..21b819f 100644
+--- a/src/fps_metrics.h
++++ b/src/fps_metrics.h
+@@ -175,4 +175,4 @@ class fpsMetrics {
+         }
+ };
+ 
+-extern std::unique_ptr<fpsMetrics> fpsmetrics;
++extern std::shared_ptr<fpsMetrics> fpsmetrics;
+diff --git a/src/hud_elements.cpp b/src/hud_elements.cpp
+index 8083591..4736e3d 100644
+--- a/src/hud_elements.cpp
++++ b/src/hud_elements.cpp
+@@ -1640,10 +1640,11 @@ void HudElements::exec_name(){
+ }
+ 
+ void HudElements::fps_metrics(){
+-    if (!fpsmetrics)
++    auto fm = std::atomic_load_explicit(&fpsmetrics, std::memory_order_acquire);
++    if (!fm)
+         return;
+ 
+-    for (auto& metric : fpsmetrics->copy_metrics()){
++    for (auto& metric : fm->copy_metrics()){
+         if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_horizontal])
+             ImGui::TableNextRow();
+ 
+diff --git a/src/keybinds.cpp b/src/keybinds.cpp
+index 28b4f55..3496cfb 100644
+--- a/src/keybinds.cpp
++++ b/src/keybinds.cpp
+@@ -94,7 +94,7 @@ void check_keybinds(struct overlay_params& params){
+    if (elapsedF12 >= keyPressDelay &&
+        keys_are_pressed(real_params->reset_fps_metrics)) {
+       last_f12_press = now;
+-      if (fpsmetrics)
+-         fpsmetrics->reset_metrics();
++      if (auto fm = std::atomic_load_explicit(&fpsmetrics, std::memory_order_acquire))
++         fm->reset_metrics();
+    }
+ }
+diff --git a/src/meson.build b/src/meson.build
+index 9534a18..ac865f4 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -1,4 +1,5 @@
+ glslang = find_program('glslang', 'glslangValidator')
++json_c_dep = dependency('json-c')
+ 
+ if get_option('dynamic_string_tokens')
+   ld_prefix = get_option('prefix') + '/\$LIB/'
+@@ -50,6 +51,7 @@ util_files = files(
+ 
+ vklayer_files = files(
+   'hud_elements.cpp',
++  'custom_hud.cpp',
+   'overlay.cpp',
+   'overlay_params.cpp',
+   'font.cpp',
+@@ -211,7 +213,8 @@ mangohud_static_lib = static_library(
+     dep_vulkan_headers,
+     dep_vulkan_utility_libraries,
+     windows_deps,
+-    implot_dep],
++    implot_dep,
++    json_c_dep],
+   include_directories : [inc_common],
+   link_args : link_args,
+   install_dir : libdir_mangohud,
+@@ -253,7 +256,8 @@ mangohud_opengl_shared_lib = shared_library(
+     dep_vulkan_headers,
+     dep_vulkan_utility_libraries,
+     windows_deps,
+-    implot_dep],
++    implot_dep,
++    json_c_dep],
+   include_directories : [inc_common],
+   link_args : link_args,
+   link_with: mangohud_static_lib,
+@@ -290,7 +294,8 @@ if get_option('mangoapp')
+       dep_x11,
+       dep_wayland_client,
+       glfw3_dep,
+-      implot_dep
++      implot_dep,
++      json_c_dep
+     ],
+     include_directories : [inc_common],
+     install_tag : 'mangoapp',
+diff --git a/src/overlay.cpp b/src/overlay.cpp
+index 2196953..6b6192a 100644
+--- a/src/overlay.cpp
++++ b/src/overlay.cpp
+@@ -28,6 +28,7 @@
+ #include "net.h"
+ #include "fex.h"
+ #include "ftrace.h"
++#include "custom_hud.h"
+ 
+ #ifdef __linux__
+ #include <libgen.h>
+@@ -104,19 +105,21 @@ void update_hw_info(const struct overlay_params& params, uint32_t vendorID)
+    auto real_params = get_params();
+    if (real_params->enabled[OVERLAY_PARAM_ENABLED_fan])
+       update_fan();
+-   if (real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_stats] || logger->is_active()) {
++   if (real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_stats] || logger->is_active() || !real_params->custom_layout.empty()) {
+       cpuStats.UpdateCPUData();
+ 
+ #ifdef __linux__
+-      if (real_params->enabled[OVERLAY_PARAM_ENABLED_core_load] || real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_mhz] || logger->is_active())
++      if (real_params->enabled[OVERLAY_PARAM_ENABLED_core_load] || real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_mhz] || logger->is_active() || !real_params->custom_layout.empty())
+          cpuStats.UpdateCoreMhz();
+-      if (real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_temp] || logger->is_active() || real_params->enabled[OVERLAY_PARAM_ENABLED_graphs])
++      if (real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_temp] || logger->is_active() || real_params->enabled[OVERLAY_PARAM_ENABLED_graphs] || !real_params->custom_layout.empty())
+          cpuStats.UpdateCpuTemp();
+-      if (real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_power] || logger->is_active())
++      if (real_params->enabled[OVERLAY_PARAM_ENABLED_cpu_power] || logger->is_active() || !real_params->custom_layout.empty())
+          cpuStats.UpdateCpuPower();
++      if (!real_params->custom_layout.empty())
++         custom_hud_publish_cpu_extra(); // 同线程发布快照，渲染侧只读，无竞争
+ #endif
+    }
+-   if (real_params->enabled[OVERLAY_PARAM_ENABLED_gpu_stats] || logger->is_active()) {
++   if (real_params->enabled[OVERLAY_PARAM_ENABLED_gpu_stats] || logger->is_active() || !real_params->custom_layout.empty()) {
+       if (gpus)
+          gpus->get_metrics();
+    }
+@@ -130,9 +133,9 @@ void update_hw_info(const struct overlay_params& params, uint32_t vendorID)
+             device_info();
+       }
+    }
+-   if (real_params->enabled[OVERLAY_PARAM_ENABLED_ram] || real_params->enabled[OVERLAY_PARAM_ENABLED_swap] || logger->is_active())
++   if (real_params->enabled[OVERLAY_PARAM_ENABLED_ram] || real_params->enabled[OVERLAY_PARAM_ENABLED_swap] || logger->is_active() || !real_params->custom_layout.empty())
+       update_meminfo();
+-   if (real_params->enabled[OVERLAY_PARAM_ENABLED_ram_temp])
++   if (real_params->enabled[OVERLAY_PARAM_ENABLED_ram_temp] || !real_params->custom_layout.empty())
+       update_mem_temp();
+    if (real_params->enabled[OVERLAY_PARAM_ENABLED_procmem])
+       update_procmem();
+@@ -257,14 +260,14 @@ void update_hud_info_with_frametime(struct swapchain_stats& sw_stats, const stru
+ #endif
+    frametime = frametime_ms;
+    fps = double(1000 / frametime_ms);
+-   if (fpsmetrics) fpsmetrics->update(frametime_ms);
++   if (auto fm = std::atomic_load_explicit(&fpsmetrics, std::memory_order_acquire)) fm->update(frametime_ms);
+ 
+    if (elapsed >= real_params->fps_sampling_period) {
+       if (!hw_update_thread)
+          hw_update_thread = std::make_unique<hw_info_updater>();
+       hw_update_thread->update(&params, vendorID);
+ 
+-      if (fpsmetrics) fpsmetrics->update_thread();
++      if (auto fm = std::atomic_load_explicit(&fpsmetrics, std::memory_order_acquire)) fm->update_thread();
+ #ifdef __linux__
+       if (HUDElements.net) HUDElements.net->update();
+ #endif
+@@ -694,7 +697,9 @@ void render_imgui(swapchain_stats& data, struct overlay_params& params, ImVec2&
+    if(real_params->enabled[OVERLAY_PARAM_ENABLED_horizontal])
+       table_flags = ImGuiTableFlags_NoClip | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_NoHostExtendX;
+ 
+-   if (!real_params->no_display && !steam_focused && get_params()->table_columns){
++   if (!real_params->no_display && !steam_focused && !real_params->custom_layout.empty()) {
++      custom_hud_render(data, *real_params);
++   } else if (!real_params->no_display && !steam_focused && get_params()->table_columns){
+       ImGui::Begin("Main", &gui_open, ImGuiWindowFlags_NoDecoration);
+       if (ImGui::BeginTable("hud", real_params->table_columns, table_flags )) {
+          HUDElements.place = 0;
+diff --git a/src/overlay_params.cpp b/src/overlay_params.cpp
+index b10a0ce..e8daeed 100644
+--- a/src/overlay_params.cpp
++++ b/src/overlay_params.cpp
+@@ -44,7 +44,7 @@
+ #include "fps_metrics.h"
+ #include "version.h"
+ 
+-std::unique_ptr<fpsMetrics> fpsmetrics;
++std::shared_ptr<fpsMetrics> fpsmetrics;
+ std::mutex config_mtx;
+ std::condition_variable config_cv;
+ bool config_ready = false;
+@@ -396,15 +396,15 @@ parse_path(const char *str)
+       wordexp_t e;
+       int ret;
+ 
+-      if (!(ret = wordexp(str, &e, 0))) {
++      if (!(ret = wordexp(str, &e, WRDE_NOCMD))) {
+          for(size_t i = 0; i < e.we_wordc; i++)
+          {
+             if (i > 0)
+                s << " ";
+             s << e.we_wordv[i];
+          }
++         wordfree(&e);
+       }
+-      wordfree(&e);
+ 
+       if (!ret)
+          return s.str();
+@@ -473,7 +473,7 @@ parse_fps_metrics(const char *str){
+       metrics.push_back(token);
+    }
+ 
+-   fpsmetrics = std::make_unique<fpsMetrics>(metrics);
++   std::atomic_store_explicit(&fpsmetrics, std::make_shared<fpsMetrics>(metrics), std::memory_order_release);
+    return metrics;
+ }
+ 
+@@ -634,6 +634,7 @@ parse_ftrace(const char *str) {
+ #define parse_blacklist(s) parse_str_tokenize(s)
+ #define parse_custom_text_center(s) parse_str(s)
+ #define parse_custom_text(s) parse_str(s)
++#define parse_custom_layout(s) parse_str(s)
+ #define parse_fps_value(s) parse_load_value(s)
+ #define parse_fps_color(s) parse_load_color(s)
+ #define parse_battery_color(s) parse_color(s)
+diff --git a/src/overlay_params.h b/src/overlay_params.h
+index 0ff802c..01c3203 100644
+--- a/src/overlay_params.h
++++ b/src/overlay_params.h
+@@ -225,6 +225,7 @@ struct Tracepoint;
+    OVERLAY_PARAM_CUSTOM(gpu_list)                    \
+    OVERLAY_PARAM_CUSTOM(fex_stats)                   \
+    OVERLAY_PARAM_CUSTOM(ftrace)                      \
++   OVERLAY_PARAM_CUSTOM(custom_layout)               \
+ 
+ enum overlay_param_position {
+    LAYER_POSITION_TOP_LEFT,
+@@ -350,6 +351,7 @@ struct overlay_params {
+    uint32_t font_glyph_ranges;
+    std::string custom_text_center;
+    std::string custom_text;
++   std::string custom_layout;
+    std::string config_file_path;
+    std::unordered_map<std::string,std::string> options;
+    int permit_upload;
