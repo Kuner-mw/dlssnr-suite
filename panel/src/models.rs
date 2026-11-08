@@ -10,11 +10,11 @@ use std::sync::Mutex;
 static MODEL_IO_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn models_dir() -> PathBuf {
-    crate::sysapi::home().join(".local/share/dlssnr/models")
+    crate::sysapi::data_dir().join("models")
 }
 
 pub fn binaries_dir() -> PathBuf {
-    crate::sysapi::home().join(".local/share/dlssnr/binaries")
+    crate::sysapi::data_dir().join("binaries")
 }
 
 pub fn active_dll() -> PathBuf {
@@ -130,6 +130,17 @@ pub fn scan() -> serde_json::Value {
         "library_dir": models_dir().display().to_string(),
         "binaries_dir": binaries_dir().display().to_string(),
     })
+}
+
+/// 合并外部登记（refresh action）到 library.json：与导入/切换共用 MODEL_IO_LOCK，
+/// 原子写（临时文件 + rename），防并发丢登记/半截 JSON
+pub fn merge_lib(entries: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let _guard = MODEL_IO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut lib = read_lib();
+    for (k, v) in entries {
+        lib.insert(k.clone(), v.clone());
+    }
+    write_lib(&lib)
 }
 
 pub fn activate(file_name: &str) -> Result<String, String> {

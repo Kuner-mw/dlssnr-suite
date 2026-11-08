@@ -423,15 +423,19 @@ fn close_popups(
 /// 游戏运行期间持续关闭启动器小窗（面板重启后首轮扫描也会补关）。
 pub fn spawn_watcher(shm: Arc<crate::shm::Shm>) {
     std::thread::spawn(move || {
+        let shm_cleanup = shm.clone(); // 启动清理线程用
         let mut prev: HashMap<String, bool> = HashMap::new();
         let mut first_scan = true;
         // 启动清理：无游戏在跑而 helper 挂着 = 上次会话残留，回收（省 ~700MB 显存）
         std::thread::spawn(move || {
+            let shm = shm_cleanup;
             std::thread::sleep(Duration::from_secs(4));
             let any_game = list_profiles()
                 .iter()
                 .any(|p| !p.match_exe.is_empty() && crate::sysapi::game_running(&p.match_exe));
-            if !any_game && !crate::sysapi::helper_pids().is_empty() {
+            // shm 层已接管（model_up=1）说明有活跃会话（可能未建档或档匹配失效），不回收
+            let layer_active = shm.read_u32(crate::defs::status_off::MODEL_UP).unwrap_or(0) == 1;
+            if !any_game && !layer_active && !crate::sysapi::helper_pids().is_empty() {
                 match crate::sysapi::helper_stop() {
                     Ok(_) => crate::log("启动清理：无游戏在跑，已回收残留 helper"),
                     Err(e) => crate::log(format!("启动清理失败: {e}")),
@@ -494,6 +498,13 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
     let shm = shm.clone();
     let p = p.clone();
     std::thread::spawn(move || {
+        // 异步任务最长可挂 45s+，期间游戏可能已退出：每阶段前确认仍运行，
+        // 避免把旧档参数应用到新会话或抢回联动位（P1：跨会话写状态）
+        let alive = || crate::sysapi::game_running(&p.match_exe);
+        if !alive() {
+            crate::log("auto_link: 游戏在联动开始前已退出，跳过本次联动");
+            return;
+        }
         // helper 动态探测：1.5s 内出现 = wrapper 托管；否则面板拉起
         if p.auto_helper {
             let mut external = false;
@@ -501,6 +512,10 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
                 if !crate::sysapi::helper_pids().is_empty() {
                     external = true;
                     break;
+                }
+                if !alive() {
+                    crate::log("auto_link: 游戏在联动过程中退出，中止");
+                    return;
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -514,7 +529,7 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
             }
         }
         // 自动滤镜：游戏建交换链（20s+）前写入 conf 无竞态
-        if p.auto_filter {
+        if p.auto_filter && alive() {
             if let Some(f) = &p.filter {
                 for (k, v) in f.as_object().unwrap_or(&serde_json::Map::new()) {
                     let s = match v {
@@ -531,10 +546,14 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
                 crate::log("auto_filter: vkBasalt 配置已按该游戏档写入");
             }
         }
-        // 自动应用：等 model_up（最长 45s）
+        // 自动应用：等 model_up（最长 45s），期间游戏退出则中止
         if p.auto_apply {
             let mut ok = false;
             for _ in 0..90 {
+                if !alive() {
+                    crate::log("auto_apply: 游戏在等待模型就绪期间退出，中止联动");
+                    return;
+                }
                 if shm.read_u32(crate::defs::status_off::MODEL_UP) == Some(1)
                     && shm.available()
                 {
@@ -543,14 +562,18 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
-            if ok {
+            if ok && alive() {
                 match apply_profile(&shm, &p) {
                     Ok(msg) => crate::log(format!("auto_apply: {msg}")),
                     Err(e) => crate::log(format!("auto_apply 失败: {e}")),
                 }
-            } else {
+            } else if !ok {
                 crate::log("auto_apply 超时：model_up 45s 内未就绪");
             }
+        }
+        if !alive() {
+            crate::log("auto_link: 游戏在联动完成前退出，不置联动位");
+            return;
         }
         // 活跃游戏置位（面板调参双写目标）
         *ACTIVE_GAME.lock().unwrap() = Some(p.appid.clone());

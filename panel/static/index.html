@@ -339,16 +339,16 @@ a{color:var(--accent);}
   <!-- ═══════════ 模型 ═══════════ -->
   <div class="page" id="page-model">
     <div class="card">
-      <h2><span class="dot" id="mActDot"></span>当前激活模型</h2>
+      <h2><span class="dot" id="mActDot"></span>binaries 当前文件</h2>
       <div id="mActive" class="hint">…</div>
-      <div class="hint">这张卡=游戏现在真正加载的模型。切了模型但这里没跟着变=还没重启助手。</div>
+      <div class="hint">这张卡 = binaries 目录当前的 DLL 文件（助手重启后加载的就是它）。切了模型但这里没跟着变 = 还没重启助手。</div>
     </div>
     <div class="card">
       <h2><span class="dot"></span>模型库 <button class="btn sm" id="mRefresh" style="margin-left:auto">刷新</button></h2>
       <div id="mLib"></div>
       <div class="hint">把 <b>nvngx_dlssnr*.dll</b> 放入 <span class="mono" id="mLibDir">~/.local/share/dlssnr/models/</span> 后点刷新，
         或在下方粘贴已下载的 dll 路径直接导入。
-        切换 = 原子替换 binaries/nvngx_dlssnr.dll（现役 DLL 自动入库留底），<b>重启助手后生效</b>。</div>
+        完整流程：导入 → 点下方库条目切换 → <b>重启助手后生效</b>（切换 = 原子替换 binaries/nvngx_dlssnr.dll，现役 DLL 自动入库留底）。</div>
       <div class="row" style="margin:8px 0 0">
         <input type="text" id="mImportPath" class="mono sunken" placeholder="已下载的模型 dll 完整路径，如 ~/下载/nvngx_dlssnr_310.9.16.dll" style="flex:1">
         <button class="btn sm acc" id="mImport">导入模型</button>
@@ -434,10 +434,52 @@ async function api(path, body) {
     headers:{"X-DLSS-Token": TOKEN}};
   if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
   const r = await fetch(path, opt);
-  if (r.status===401){ toast("令牌无效：请从终端打印的带令牌地址打开", true); throw new Error("401"); }
+  if (r.status===401){
+    const t = await askToken();            // 弹窗获取新令牌（并发 401 合并为一次输入）
+    if (t) { opt.headers["X-DLSS-Token"] = t; const rr = await fetch(path, opt);
+      if (rr.status===401) { toast("令牌仍无效：请核对 webui.token 内容", true); throw new Error("401"); }
+      const jj = await rr.json();
+      if (!rr.ok || jj.ok === false) { const msg = jj?.error || jj?.msg || `HTTP ${rr.status}`; toast(msg, true); throw new Error(msg); }
+      return jj;
+    }
+    toast("未提供令牌：请从终端打印的带令牌地址打开（cat ~/.local/state/dlssnr/webui.token）", true);
+    throw new Error("401");
+  }
   const j = await r.json();
   if (!r.ok || j.ok === false) { const msg = j?.error || j?.msg || `HTTP ${r.status}`; toast(msg, true); throw new Error(msg); }
   return j;
+}
+
+// 令牌输入模态：首次部署/令牌更换后，裸开面板时的自助接入入口
+let askingToken = null;
+function askToken(){
+  if (askingToken) return askingToken;
+  askingToken = new Promise(resolve => {
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center";
+    const card = document.createElement("div");
+    card.style.cssText = "background:var(--bg,#0b120f);color:var(--text,#d9e4dc);border-radius:20px;padding:22px 24px;max-width:420px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,.5)";
+    card.innerHTML = `<div style="font-weight:700;font-size:15px;margin-bottom:8px">🔒 需要访问令牌</div>
+      <div style="font-size:12px;opacity:.8;line-height:1.6;margin-bottom:12px">在面板主机上执行 <span class="mono">cat ~/.local/state/dlssnr/webui.token</span>，把输出的令牌粘贴到这里。</div>
+      <input id="askTokenInput" class="mono sunken" style="width:100%;padding:9px 12px;font-size:13px" placeholder="粘贴访问令牌" autocomplete="off">
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button class="btn sm" id="askTokenCancel">取消</button>
+        <button class="btn sm acc" id="askTokenOk">保存并连接</button>
+      </div>`;
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    const inp = card.querySelector("#askTokenInput");
+    inp.focus();
+    const done = tok => {
+      ov.remove(); askingToken = null;
+      if (tok) { localStorage.setItem("dlssnr_token", tok); TOKEN = tok; }
+      resolve(tok || null);
+    };
+    card.querySelector("#askTokenOk").onclick = () => done(inp.value.trim());
+    card.querySelector("#askTokenCancel").onclick = () => done(null);
+    inp.onkeydown = e => { if (e.key === "Enter") card.querySelector("#askTokenOk").click(); };
+  });
+  return askingToken;
 }
 
 // ── toast ──────────────────────────────────────────────────────────────────
@@ -899,8 +941,13 @@ document.getElementById("fLaunchOff").onclick=async ()=>{ const j=await api("/ap
 
 // ── 模型 ───────────────────────────────────────────────────────────────────
 async function loadModels(){
-  const j = await api("/api/models");
-  const m=j.models, act=m.active;
+  let j;
+  try { j = await api("/api/models"); } catch(e){ loadFailures.model=true; throw e; }
+  delete loadFailures.model;
+  renderModels(j.models);
+}
+function renderModels(m){
+  const act=m.active;
   document.getElementById("mLibDir").textContent=m.library_dir;
   const dot=document.getElementById("mActDot");
   dot.className="dot "+(act?"on":"off");
@@ -925,7 +972,7 @@ async function loadModels(){
     lib.appendChild(d);
   });
 }
-document.getElementById("mRefresh").onclick=async ()=>{ try{ const j=await api("/api/models",{action:"refresh"}); toast("已刷新"); loadModels(); }catch(e){} };
+document.getElementById("mRefresh").onclick=async ()=>{ try{ const j=await api("/api/models",{action:"refresh"}); toast("已刷新"); renderModels(j.models); loadFailures.model=false; }catch(e){} };
 document.getElementById("mImport").onclick=async ()=>{
   const btn=document.getElementById("mImport");
   const path=(document.getElementById("mImportPath").value||"").trim();
@@ -935,7 +982,7 @@ document.getElementById("mImport").onclick=async ()=>{
     const r=await api("/api/models",{action:"import", path});
     toast(r.msg||"已导入");
     document.getElementById("mImportPath").value="";
-    await loadModels();
+    renderModels(r.models);
   }catch(e){ /* api 已 toast 错误 */ }
   btn.disabled=false;
 };
@@ -979,8 +1026,11 @@ async function loadGames(){
       b.onclick = async ()=>{
         const gp = GAMES.games.find(x=>x.appid===b.dataset.g); if(!gp) return;
         gp[b.dataset.k] = !gp[b.dataset.k];
-        const r = await api("/api/games", {action:"update", profile: gp});
-        toast(r.msg||"已更新"); loadGames();
+        try{
+          const r = await api("/api/games", {action:"update", patch:{appid: gp.appid, [b.dataset.k]: gp[b.dataset.k]}});
+          toast(r.msg||"已更新");
+        }catch(e){ gp[b.dataset.k] = !gp[b.dataset.k]; }  // 失败回滚本地态
+        loadGames();
       };
     });
     card.querySelectorAll("input[data-popupt]").forEach(inp=>{
@@ -989,7 +1039,7 @@ async function loadGames(){
         const gp = GAMES.games.find(x=>x.appid===inp.dataset.popupt); if(!gp) return;
         gp.popup_titles = inp.value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
         try{
-          const r = await api("/api/games", {action:"update", profile: gp});
+          const r = await api("/api/games", {action:"update", patch:{appid: gp.appid, popup_titles: gp.popup_titles}});
           toast(r.msg||"已更新");
         }catch(e){ toast("小窗关键词保存失败: "+e.message, true); }
       };

@@ -7,16 +7,28 @@ pub fn home() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
 }
 
+fn xdg_dir(var: &str, default_tail: &str) -> PathBuf {
+    match std::env::var(var) {
+        Ok(v) if !v.trim().is_empty() && v.starts_with('/') => PathBuf::from(v),
+        _ => home().join(default_tail),
+    }
+}
+
+/// 与 install.sh/uninstall.sh 相同的 XDG 口径（HOME 回退保证自包含运行也可用）
 pub fn state_dir() -> PathBuf {
-    home().join(".local/state/dlssnr")
+    xdg_dir("XDG_STATE_HOME", ".local/state").join("dlssnr")
 }
 
 pub fn config_ini() -> PathBuf {
-    home().join(".config/dlssnr/config.ini")
+    xdg_dir("XDG_CONFIG_HOME", ".config").join("dlssnr/config.ini")
 }
 
 pub fn games_dir() -> PathBuf {
-    home().join(".config/dlssnr-panel/games")
+    xdg_dir("XDG_CONFIG_HOME", ".config").join("dlssnr-panel/games")
+}
+
+pub fn data_dir() -> PathBuf {
+    xdg_dir("XDG_DATA_HOME", ".local/share").join("dlssnr")
 }
 
 pub fn token_file() -> PathBuf {
@@ -28,7 +40,23 @@ pub fn log_file() -> PathBuf {
 }
 
 pub fn helper_bin() -> PathBuf {
-    home().join(".local/bin/dlssnr-helper")
+    let user = home().join(".local/bin/dlssnr-helper");
+    if user.exists() {
+        return user;
+    }
+    // 系统级安装（AUR dlssnr-bin 等系统路径）回退
+    for p in [
+        "/usr/bin/dlssnr-helper",
+        "/usr/local/bin/dlssnr-helper",
+        "/usr/lib/dlssnr/bin/dlssnr-helper",
+        "/usr/lib64/dlssnr/bin/dlssnr-helper",
+    ] {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return pb;
+        }
+    }
+    user
 }
 
 // ── 进程检测 ────────────────────────────────────────────────────────────────
@@ -73,8 +101,9 @@ pub fn game_running(match_exes: &[String]) -> bool {
         if name.is_empty() {
             continue;
         }
-        // 整名正则转义；pgrep 排除自身且调用不经 shell，无自匹配问题
-        let p = regex_escape(name);
+        // 整名正则转义 + 边界匹配（参数开头/路径分隔符之后，参数结尾/空格之前），
+        // 防 "Game.exe" 作为其他进程的参数子串被误判；pgrep 排除自身且不经 shell
+        let p = format!(r#"(^|[ /\\]){}($|[ "])"#, regex_escape(name));
         let out = std::process::Command::new("pgrep")
             .args(["-f", "-i", "--"])
             .arg(&p)
@@ -161,7 +190,7 @@ pub fn helper_start() -> Result<String, String> {
         .append(true)
         .open(log_file())
         .map_err(|e| e.to_string())?;
-    std::process::Command::new(helper_bin())
+    let mut child = std::process::Command::new(helper_bin())
         .arg("start")
         .env_clear()
         .envs(helper_env())
@@ -169,6 +198,10 @@ pub fn helper_start() -> Result<String, String> {
         .stderr(log)
         .spawn()
         .map_err(|e| format!("spawn 失败: {e}"))?;
+    // 专用线程等待子进程退出，防僵尸
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
     crate::log("helper start 已发起（异步，就绪约 15s）");
     Ok("helper 启动中（约 15s 就绪），状态条稍后自动更新".into())
 }
@@ -178,6 +211,11 @@ pub fn helper_stop() -> Result<String, String> {
         .arg("stop")
         .output()
         .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        crate::log(format!("helper stop 非零退出（{}）", crate::log_field(&stderr)));
+        return Err(format!("helper stop 失败（退出码 {}）", out.status.code().unwrap_or(-1)));
+    }
     crate::log("helper stop 完成");
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

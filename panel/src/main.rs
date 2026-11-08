@@ -391,15 +391,7 @@ fn route(
                 }
                 "refresh" => {
                     if let Some(lib) = body.get("lib").and_then(|v| v.as_object()) {
-                        let mut cur = read_model_lib();
-                        for (k, v) in lib {
-                            cur.insert(k.clone(), v.clone());
-                        }
-                        let _ = std::fs::create_dir_all(models::models_dir());
-                        let _ = std::fs::write(
-                            models::models_dir().join("library.json"),
-                            serde_json::to_string(&cur).map_err(|e| (400u16, e.to_string()))?,
-                        );
+                        models::merge_lib(lib).map_err(|e| (400u16, e))?;
                     }
                     Ok((200, json!({"ok": true, "models": models::scan()})))
                 }
@@ -545,6 +537,33 @@ fn route(
             let action = body.get("action").and_then(|v| v.as_str()).unwrap_or("");
             match action {
                 "save" | "update" => {
+                    // patch 模式：磁盘现值为底，只覆盖请求携带的顶层字段（防并发整档回滚）
+                    if let Some(patch) = body.get("patch").and_then(|v| v.as_object()) {
+                        let appid = patch
+                            .get("appid")
+                            .and_then(|v| v.as_str())
+                            .ok_or((400u16, "patch 缺少 appid".to_string()))?;
+                        let mut p = games::load_profile(appid)
+                            .ok_or((400u16, format!("档不存在: {appid}")))?;
+                        if let Some(v) = patch.get("name") { p.name = v.as_str().unwrap_or(&p.name).to_string(); }
+                        if let Some(v) = patch.get("auto_helper") { p.auto_helper = v.as_bool().unwrap_or(p.auto_helper); }
+                        if let Some(v) = patch.get("auto_apply") { p.auto_apply = v.as_bool().unwrap_or(p.auto_apply); }
+                        if let Some(v) = patch.get("auto_filter") { p.auto_filter = v.as_bool().unwrap_or(p.auto_filter); }
+                        if let Some(v) = patch.get("auto_close_popups") { p.auto_close_popups = v.as_bool().unwrap_or(p.auto_close_popups); }
+                        if let Some(v) = patch.get("popup_titles") {
+                            p.popup_titles = serde_json::from_value(v.clone()).unwrap_or(p.popup_titles);
+                        }
+                        if let Some(v) = patch.get("match_exe") {
+                            p.match_exe = serde_json::from_value(v.clone()).unwrap_or(p.match_exe);
+                        }
+                        games::save_profile(&p).map_err(|e| (400u16, e))?;
+                        log(format!(
+                            "游戏档字段更新: {} ({})",
+                            log_field(&p.name),
+                            log_field(&p.appid)
+                        ));
+                        return Ok((200, json!({"ok": true, "msg": format!("已更新 {} 的游戏档", p.name)})));
+                    }
                     let p: games::GameProfile =
                         serde_json::from_value(body.get("profile").cloned().unwrap_or(json!({})))
                             .map_err(|e| (400u16, format!("profile 解析失败: {e}")))?;
@@ -850,10 +869,19 @@ fn profiles_list() -> serde_json::Value {
 }
 
 fn game_running_any(state: &Arc<AppState>) -> bool {
-    let _ = state;
-    games::list_profiles()
+    // 档匹配优先；匹配失效（未建档/档删除/换 exe）但层已接管（model_up=1）时
+    // 仍视为有活跃会话，避免安全闸误判为「无游戏」而拆掉正在使用的 helper
+    if games::list_profiles()
         .iter()
         .any(|p| !p.match_exe.is_empty() && sysapi::game_running(&p.match_exe))
+    {
+        return true;
+    }
+    state
+        .shm
+        .read_u32(defs::status_off::MODEL_UP)
+        .map(|v| v == 1)
+        .unwrap_or(false)
 }
 
 fn read_model_lib() -> serde_json::Map<String, serde_json::Value> {
