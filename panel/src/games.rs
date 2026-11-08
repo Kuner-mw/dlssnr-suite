@@ -490,7 +490,7 @@ pub fn spawn_watcher(shm: Arc<crate::shm::Shm>) {
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
 fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
-    crate::log(format!("检测到游戏启动: {} ({})", p.name, p.appid));
+    crate::log(format!("检测到游戏启动: {} ({})", crate::log_field(&p.name), crate::log_field(&p.appid)));
     let shm = shm.clone();
     let p = p.clone();
     std::thread::spawn(move || {
@@ -558,10 +558,25 @@ fn on_game_up(shm: &Arc<crate::shm::Shm>, p: &GameProfile) {
 }
 
 fn on_game_down(p: &GameProfile) {
-    crate::log(format!("检测到游戏退出: {} ({})", p.name, p.appid));
-    *ACTIVE_GAME.lock().unwrap() = None;
-    // wrapper 已从启动项移除，helper 只会由面板拉起——游戏退出即无条件回收
-    if !crate::sysapi::game_running(&p.match_exe) {
+    crate::log(format!("检测到游戏退出: {} ({})", crate::log_field(&p.name), crate::log_field(&p.appid)));
+    // 多游戏并存时：只有退出的就是当前联动游戏才清位；且仍有其他游戏在跑时不回收 helper
+    let profiles = list_profiles();
+    let still_active: Vec<&GameProfile> = profiles
+        .iter()
+        .filter(|q| q.appid != p.appid && !q.match_exe.is_empty() && crate::sysapi::game_running(&q.match_exe))
+        .collect();
+    let cur = ACTIVE_GAME.lock().unwrap().clone();
+    if cur.as_deref() == Some(p.appid.as_str()) {
+        match still_active.first() {
+            Some(next) => {
+                *ACTIVE_GAME.lock().unwrap() = Some(next.appid.clone());
+                crate::log(format!("另一游戏仍在运行（{}），保持 helper 与联动位", next.name));
+                return; // helper 继续服务下一个游戏
+            }
+            None => *ACTIVE_GAME.lock().unwrap() = None,
+        }
+    }
+    if still_active.is_empty() && !crate::sysapi::game_running(&p.match_exe) {
         if !STOPPING.swap(true, Ordering::SeqCst) {
             std::thread::spawn(move || {
                 match crate::sysapi::helper_stop() {

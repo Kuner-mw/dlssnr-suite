@@ -168,13 +168,13 @@ pub fn activate(file_name: &str) -> Result<String, String> {
                 serde_json::json!({"label": "切换前自动备份", "version": "", "target": "", "source": "自动"}),
             );
             write_lib(&lib)?;
-            crate::log(format!("原 DLL 已入库留底: {}", backup.display()));
+            crate::log(format!("原 DLL 已入库留底: {}", crate::log_field(&backup.display().to_string())));
         }
     }
     let tmp = binaries_dir().join("nvngx_dlssnr.dll.tmp");
     std::fs::copy(&src, &tmp).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, active_dll()).map_err(|e| e.to_string())?;
-    crate::log(format!("模型已切换 → {file_name}"));
+    crate::log(format!("模型已切换 → {}", crate::log_field(&file_name)));
     Ok(format!("已切换为 {file_name}。重启 helper 后生效（游戏运行中请先退出）。"))
 }
 

@@ -1002,6 +1002,7 @@ async function loadGames(){
         const act=b.dataset.act, id=b.dataset.g;
         if(act==="delete" && !confirm("删除 "+id+" 的游戏档？")) return;
         if(act==="reset" && !confirm("还原该游戏初始参数并应用？")) return;
+        if(act==="reset") act="reset-initial";   // 后端 /api/games 的还原动作为 reset-initial
         if(act==="snap"){
           const gp=GAMES.games.find(x=>x.appid===id); if(!gp) return;
           const filter = confirm("同时把当前 vkBasalt 滤镜配置存入该游戏档？")

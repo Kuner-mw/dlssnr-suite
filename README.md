@@ -102,7 +102,7 @@ VKLayer_DLSS5=1 %command%
 
 ```bash
 ~/.local/bin/dlssnr-shmctl /tmp/dlssnr-$(id -u)/shm.bin status   # model_up=1 且 helper_frames 自增
-tail -f ~/.local/state/dlssnr/helper.log                     # 逐帧日志
+journalctl --user -u dlssnr-panel -f                         # 逐帧日志（helper 输出并入面板日志）
 ```
 
 ## 版本 pin 与升级

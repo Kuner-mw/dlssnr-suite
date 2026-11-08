@@ -213,7 +213,7 @@ fn err(msg: impl Into<String>) -> RouteResult {
 }
 
 /// 日志字段净化：控制字符转空格并截断，防换行伪造日志
-fn log_field(s: &str) -> String {
+pub fn log_field(s: &str) -> String {
     s.chars().map(|c| if c.is_control() { ' ' } else { c }).take(120).collect()
 }
 
@@ -258,7 +258,10 @@ fn route(
             }
             let (n, tuning) = shm.write_settings(changes, passes).map_err(|e| (400u16, e))?;
             let persist_msg = if body.get("persist").and_then(|v| v.as_bool()).unwrap_or(true) {
-                sysapi::snapshot_config(shm).unwrap_or_default()
+                match sysapi::snapshot_config(shm) {
+                    Ok(m) => m,
+                    Err(e) => format!("（警告：参数已生效，但写 config.ini 存档失败: {e}）"),
+                }
             } else {
                 String::new()
             };
@@ -661,7 +664,7 @@ fn route(
                     log(format!("游戏档保存: {} ({})", log_field(&p.name), log_field(&p.appid)));
                     Ok((200, json!({"ok": true, "msg": format!("已把当前设置存为 {} 的游戏档（匹配 {}）", p.name, p.match_exe.join(", "))})))
                 }
-                "reset-initial" => {
+                "reset" | "reset-initial" => {   // "reset" 为历史别名，防前端旧版
                     let appid = body.get("appid").and_then(|v| v.as_str()).unwrap_or("");
                     let mut p = games::load_profile(appid).ok_or((400u16, "档不存在".to_string()))?;
                     let init = p.initial.clone().ok_or((400u16, "没有初始快照".to_string()))?;
@@ -929,7 +932,7 @@ fn status_view(state: &Arc<AppState>) -> serde_json::Value {
     st.insert("helper_frames".into(), json!(helper_frames));
     st.insert("layer_frames".into(), json!(layer_frames));
     st.insert("eval_ms".into(), json!(shm.read_f32(defs::status_off::EVAL_MS).unwrap_or(0.0)));
-    st.insert("vram_mb".into(), json!(r(defs::status_off::VRAM_MB)));
+    st.insert("vram_mb".into(), json!(shm.read_f32(defs::status_off::VRAM_MB).unwrap_or(0.0)));
     st.insert("features".into(), json!(r(defs::status_off::FEATURES)));
     st.insert("model_up".into(), json!(r(defs::status_off::MODEL_UP)));
     st.insert("layer_pid".into(), json!(r(defs::status_off::LAYER_PID)));

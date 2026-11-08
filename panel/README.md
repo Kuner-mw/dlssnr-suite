@@ -73,4 +73,5 @@ custom-hud/ 游戏 HUD 的 MangoHud v0.8.4 补丁与构建说明（见其 README
 ## License
 
 GPL-3.0（见仓库根 LICENSE）。上游 DLSS5VKLayer 为 AGPL-3.0、`nvngx_dlssnr.dll`
-为 NVIDIA 专有文件，均由安装脚本单独获取，本仓库不存储、不分发。
+为 NVIDIA 专有文件：本仓库不存储、不分发，也不提供下载——模型由使用者从面板
+【模型】页列出的来源自行获取并导入。
